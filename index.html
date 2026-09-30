@@ -1601,14 +1601,15 @@ async function store(storeName, key, value) {
 const setModelStatus = text => { $("model-status").hidden = !text; $("model-status").textContent = text; };
 const megabytes = bytes => `${Math.round(bytes / 1e6)} MB`;
 
-async function fetchRetrying(url, range) {
+// a byte range of url, retried on failure, including a connection dropped while `read` takes the body
+async function fetchRetrying(url, range, read = response => response) {
   for (let attempt = 1; ; attempt++) {
     try {
       const response = await fetch(url, {headers: {Range: `bytes=${range[0]}-${range[1] - 1}`}});
       if (response.status !== 206) throw new Error(`the server answered ${response.status}`);
-      return response;
+      return await read(response);
     } catch (error) {
-      if (attempt === 5 || detection?.stop) throw error;
+      if (attempt === 8 || detection?.stop) throw error;
       await sleep(2000 * attempt);
     }
   }
@@ -1633,7 +1634,7 @@ async function downloadWeights({url, source, copies, weightsBytes}, half, onProg
     let done = 0, next = 0;
     const fetchSpans = async () => {
       for (let span; (span = spans[next++]);) {
-        const bytes = new Uint8Array(await (await fetchRetrying(url, [source.start + span.start, source.start + span.end])).arrayBuffer());
+        const bytes = new Uint8Array(await fetchRetrying(url, [source.start + span.start, source.start + span.end], response => response.arrayBuffer()));
         for (const [from, to, length] of span.copies) {
           const piece = bytes.slice(from - span.start, from - span.start + length);
           if (half) weights.set(new Uint16Array(await inWorker("half", piece.buffer, [piece.buffer])), to / 4);  // to is a float32 byte offset
