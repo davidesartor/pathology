@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <!-- slides never leave this device: the page may only download its pinned libraries and the model weights -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'wasm-unsafe-eval' blob: https://cdn.jsdelivr.net/npm/openseadragon@5.0.1/ https://cdn.jsdelivr.net/npm/geotiff@3.0.5/ https://cdn.jsdelivr.net/npm/onnxruntime-web@1.30.0/; worker-src blob:; connect-src blob: https://cdn.jsdelivr.net/npm/onnxruntime-web@1.30.0/ https://zenodo.org/api/records/; img-src blob: data: https://cdn.jsdelivr.net/npm/openseadragon@5.0.1/; style-src 'unsafe-inline'; form-action 'none'; base-uri 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'wasm-unsafe-eval' blob: https://cdn.jsdelivr.net/npm/openseadragon@5.0.1/ https://cdn.jsdelivr.net/npm/geotiff@3.0.5/ https://cdn.jsdelivr.net/npm/@cornerstonejs/codec-openjpeg@1.3.6/ https://cdn.jsdelivr.net/npm/onnxruntime-web@1.30.0/; worker-src blob:; connect-src blob: https://cdn.jsdelivr.net/npm/@cornerstonejs/codec-openjpeg@1.3.6/ https://cdn.jsdelivr.net/npm/onnxruntime-web@1.30.0/ https://zenodo.org/api/records/; img-src blob: data: https://cdn.jsdelivr.net/npm/openseadragon@5.0.1/; style-src 'unsafe-inline'; form-action 'none'; base-uri 'none'">
 <title>Slide viewer</title>
 <style>
   html, body { margin: 0; height: 100%; background: #1a1a1a; color: #eee; font: 13px system-ui, sans-serif; }
@@ -27,6 +27,8 @@
   #panel .swatch { flex: none; width: 10px; height: 10px; border-radius: 2px; }
   #panel .count { margin-left: auto; padding-left: 12px; color: #999; font-variant-numeric: tabular-nums; }
   #panel .note { margin: 6px 0 0; color: #aaa; font-style: italic; }
+  #panel input[type=range] { flex: 1; min-width: 0; }
+  #panel button.review { width: 100%; margin: 2px 0 4px; }
   #panel .stats { white-space: pre-line; font-style: normal; font-variant-numeric: tabular-nums; }
   #status { bottom: 8px; left: 8px; font-variant-numeric: tabular-nums; }
   #drop { position: fixed; inset: 0; z-index: 10; display: grid; place-items: center; background: rgba(0, 0, 0, 0.6); border: 3px dashed #888; font-size: 20px; }
@@ -68,11 +70,16 @@
     <p id="model-status" class="note" hidden></p>
   </div>
   <p id="draw-help" class="note" hidden>Click to place corners, or hold and drag to trace. Close with Enter, a double-click or a click on the first corner. A shape drawn inside another is an exclusion zone. Backspace undoes, Esc cancels. Two fingers pan, pinch zooms.</p>
-  <input id="slide-file" type="file" accept=".tif,.tiff,.btf,.tf8" multiple hidden>
+  <input id="slide-file" type="file" accept=".tif,.tiff,.btf,.tf8,.svs" multiple hidden>
   <input id="slide-folder" type="file" webkitdirectory hidden>
   <input id="files" type="file" accept=".geojson,.json" multiple hidden>
   <input id="folder" type="file" webkitdirectory hidden>
   <div id="layers"></div>
+  <div id="uncertainty" hidden>
+    <h4><span>Class uncertainty</span></h4>
+    <label title="divides each nucleus's class logits before the softmax: above 1 softens overconfident predictions, below 1 sharpens them">temperature <input id="temperature" type="range" min="-2" max="2" step="0.05" value="0"><span id="temperature-value" class="count"></span></label>
+    <label title="nuclei whose two most likely classes are closer than this, in probability, are ringed in white">margin below <input id="margin" type="range" min="0" max="1" step="0.05" value="0.3"><span id="margin-value" class="count"></span></label>
+  </div>
   <p id="loading" class="note" hidden></p>
   <p id="hint" class="note" hidden>zoom in for nucleus outlines</p>
   <p id="drop-hint" class="note">or drop slides, GeoJSON files or folders anywhere</p>
@@ -81,6 +88,7 @@
 <div id="drop" hidden><span>Drop slides, GeoJSON files or folders</span></div>
 <script src="https://cdn.jsdelivr.net/npm/openseadragon@5.0.1/build/openseadragon/openseadragon.min.js" integrity="sha384-Vh4b5HGyvDGMp6lVeYZe1zCqqyhS8oLTUC4SKIWmOuYH7nEuWiGIpSACopwLu9UD" crossorigin="anonymous"></script>
 <script src="https://cdn.jsdelivr.net/npm/geotiff@3.0.5/dist-browser/geotiff.js" integrity="sha384-QchpYxK+DqZYCChtK4SebrECTZEIQ0ahLhme9vwraN6KNxOGwtS66BG72wo1HQDN" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@cornerstonejs/codec-openjpeg@1.3.6/dist/openjpegwasm_decode.js" integrity="sha384-2d0uFnefmrsUyM92krljsCy3fnu5wefwCwX0au75MDClK9PQa3FuUWhmvDNPrg68" crossorigin="anonymous"></script>
 <!-- nucleus detection models, written by export_web.py -->
 <script id="nuclei-lib">
 // nuclei detection helpers shared by the page and its worker: ports of inference.py and predict_roi.py with scipy / scikit-image semantics
@@ -195,9 +203,10 @@ function tileBatch(rgb, width, height, first, count, tile = TILE, crop = CROP) {
   return tiles;
 }
 
-// write a batch of view-averaged tile centres (instance then class probabilities) into the block's float16 background and foreground and each pixel's nucleus class
-function stitchBatch(probabilities, first, count, channels, width, height, maps) {
-  const cols = Math.ceil(width / CROP), plane = CROP * CROP;
+// write a batch of view-averaged tile centres (instance then class probabilities, and nucleus-class log-probabilities) into the block's
+// float16 background, foreground and nucleus-class log-probabilities (pixel-major) and each pixel's nucleus class
+function stitchBatch(probabilities, logProbabilities, first, count, channels, width, height, maps) {
+  const cols = Math.ceil(width / CROP), plane = CROP * CROP, nClasses = channels - 4;
   for (let t = 0; t < count; t++) {
     const row = ((first + t) / cols) | 0, col = (first + t) % cols;
     for (let y = 0; y < CROP && row * CROP + y < height; y++)
@@ -206,9 +215,10 @@ function stitchBatch(probabilities, first, count, channels, width, height, maps)
         maps.background[q] = halfBits(probabilities[p]);
         maps.foreground[q] = halfBits(probabilities[p + plane]);
         // argmax over the nucleus classes (class channel 0 is background), first max wins
-        let best = 0, bestValue = HALF[halfBits(probabilities[p + 4 * plane])];
-        for (let k = 1; k < channels - 4; k++) {
+        let best = 0, bestValue = -1;
+        for (let k = 0; k < nClasses; k++) {
           const value = HALF[halfBits(probabilities[p + (4 + k) * plane])];
+          maps.classLogProbs[q * nClasses + k] = halfBits(logProbabilities[(t * nClasses + k) * plane + y * CROP + x]);
           if (value > bestValue) [best, bestValue] = [k, value];
         }
         maps.pixelClass[q] = best;
@@ -670,6 +680,19 @@ function blockNuclei(block, model) {
       const id = labels[p];
       if (id) { rowSums[id] += row; colSums[id] += col; areas[id]++; }
     }
+
+  // inference.instance_class_logits: each instance's mean nucleus-class log-probabilities, centred over classes
+  const nClasses = model.classes.length, classLogProbs = block.classLogProbs;
+  const logSums = classLogProbs ? new Float64Array(classes.length * nClasses) : null;
+  if (classLogProbs)
+    for (let p = 0; p < width * height; p++)
+      if (labels[p]) for (let k = 0; k < nClasses; k++) logSums[labels[p] * nClasses + k] += HALF[classLogProbs[p * nClasses + k]];
+  const round3 = value => roundHalfEven(value * 1e3) / 1e3;
+  const measurements = id => {
+    const means = model.classes.map((_, k) => logSums[id * nClasses + k] / areas[id]);
+    const centre = means.reduce((sum, value) => sum + value, 0) / nClasses;
+    return Object.fromEntries(model.classes.map((name, k) => [`logit(${name})`, round3(means[k] - centre)]));
+  };
   const hasExclusions = depths.some(depth => depth % 2);
   const round = value => roundHalfEven(value * 100) / 100;
   const features = [];
@@ -694,7 +717,11 @@ function blockNuclei(block, model) {
     features.push({
       type: "Feature",
       geometry: {type: "Polygon", coordinates: [outline]},
-      properties: {objectType: "detection", classification: {name: model.classes[classes[id] - 1], color: model.colors[classes[id] - 1]}},
+      properties: {
+        objectType: "detection",
+        classification: {name: model.classes[classes[id] - 1], color: model.colors[classes[id] - 1]},
+        ...logSums && {measurements: measurements(id)},
+      },
     });
   }
   return features;
@@ -706,14 +733,18 @@ if (typeof module !== "undefined") module.exports = {HALF, halfBits, resample, d
 <script>
 const CELL = 2048;  // slide px per side of the grid nuclei are bucketed in, so panning strokes only what is on screen
 const OVERVIEW = 16;  // slide px per pixel of the dot map nuclei are drawn as when zoomed out
-const MIN_DETECTION_SCALE = 1 / 4;  // screen px per slide px below which outlines are a few px wide: unreadable, and slow to stroke
+const MIN_DETECTION_SCALE = 0.4;  // screen px per slide px below which outlines are a few px wide: unreadable, and slow to stroke
 const DEFAULT_COLOR = [255, 255, 0];
+const UNCERTAIN = "uncertain class";
+const HALO_COLOR = [255, 255, 255];
+const HALO_GAP = 3;  // slide px between a nucleus and its uncertainty ring
+const REVIEW_SCALE = 2;  // screen px per slide px when stepping through uncertain nuclei
 const WATCH_INTERVAL_MS = 5000;
 
 const $ = id => document.getElementById(id);
 const stem = filename => filename.replace(/\.(geo)?json$/i, "");
 const isGeoJSON = name => /\.(geo)?json$/i.test(name);
-const isTIFF = name => /\.(tiff?|btf|tf8)$/i.test(name);
+const isTIFF = name => /\.(tiff?|btf|tf8|svs)$/i.test(name);
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 const viewerOptions = {
@@ -809,6 +840,23 @@ class LZWDecoder extends GeoTIFF.BaseDecoder {
 }
 GeoTIFF.addDecoder(5, async () => LZWDecoder);
 
+// Aperio SVS tiles are JPEG 2000 codestreams (33003 YCbCr, 33005 RGB); OpenJPEG returns them as interleaved RGB, upsampling chroma itself
+let jpeg2000 = null;
+class JPEG2000Decoder extends GeoTIFF.BaseDecoder {
+  async decodeBlock(buffer) {
+    jpeg2000 ??= fetch("https://cdn.jsdelivr.net/npm/@cornerstonejs/codec-openjpeg@1.3.6/dist/openjpegwasm_decode.wasm", {integrity: "sha384-vnERhjKq0JjqCuNAa/LFmVQcF6vG6mYNF49WJQCnRMAV/t9yMtqThwjxHTJ6uE4D"})
+      .then(response => response.arrayBuffer())
+      .then(wasmBinary => OpenJPEGWASM({wasmBinary, print: () => {}, printErr: () => {}}))
+      .then(codec => new codec.J2KDecoder());
+    const decoder = await jpeg2000;
+    const codestream = new Uint8Array(buffer);
+    decoder.getEncodedBuffer(codestream.length).set(codestream);
+    decoder.decode();
+    return decoder.getDecodedBuffer().slice().buffer;
+  }
+}
+for (const compression of [33003, 33005]) GeoTIFF.addDecoder(compression, async () => JPEG2000Decoder);
+
 const TIFF_TILE = 512;
 const OVERVIEW_BYTES = 64e6;  // stored levels up to this size (RGB) are decoded whole, once, for zoomed-out tiles
 let tiffCount = 0;
@@ -852,7 +900,7 @@ async function openTIFF(file) {
     };
   }
   const levels = images
-    .filter(image => Math.abs(image.getWidth() / image.getHeight() - width / height) < 0.01)  // not label or macro images
+    .filter(image => Math.abs(image.getHeight() - height * image.getWidth() / width) < 2)  // not label or macro images, whose shape is only close
     .map(image => ({image, downsample: width / image.getWidth()}))
     .sort((a, b) => a.downsample - b.downsample);
 
@@ -897,7 +945,9 @@ async function openTIFF(file) {
   const hasMpp = pxPerUnit > 1 && unit > 1;
   const mpp = hasMpp ? (unit === 3 ? 1e4 : 25400) / pxPerUnit : null;
   const inferenceMpp = hasMpp ? (unit === 3 ? 1e4 : 25400) / Math.fround(pxPerUnit) : null;
-  return {width, height, mpp, inferenceMpp, image: full, source};
+  // Aperio SVS keeps it in the description instead, which OpenSlide reads as is
+  const aperioMpp = Number(String(directory.getValue("ImageDescription") ?? "").match(/^Aperio[^]*\|\s*MPP\s*=\s*([\d.]+)/)?.[1]) || null;
+  return {width, height, mpp: aperioMpp ?? mpp, inferenceMpp: aperioMpp ?? inferenceMpp, image: full, source};
 }
 
 // slides are listed at once, and each is read when first shown
@@ -1037,14 +1087,74 @@ function addPolygon(cls, polygon) {
 }
 
 function addFeatures(layer, features) {
+  const start = layer.nuclei?.x.length ?? 0;
   for (const {geometry, properties} of features) {
     if (!geometry || !["Polygon", "MultiPolygon"].includes(geometry.type)) continue;
     const classification = properties?.classification ?? {};
     const color = toRGB(classification.color ?? classification.colorRGB ?? properties?.color);
     const cls = layerClass(layer, classification.name ?? "unclassified", color, properties?.objectType === "detection");
     cls.count++;
-    for (const polygon of geometry.type === "Polygon" ? [geometry.coordinates] : geometry.coordinates) addPolygon(cls, polygon);
+    const polygons = geometry.type === "Polygon" ? [geometry.coordinates] : geometry.coordinates;
+    for (const polygon of polygons) addPolygon(cls, polygon);
+
+    // nuclei with class logits are kept as centre, ring radius and logits, for the uncertainty rings
+    const logitNames = Object.keys(properties?.measurements ?? {}).filter(name => name.startsWith("logit("));
+    if (!cls.detection || !logitNames.length) continue;
+    const nuclei = layer.nuclei ??= {names: logitNames.map(name => name.slice(6, -1)), x: [], y: [], radius: [], logits: []};
+    const [x, y] = cls.centres.slice(-2);
+    nuclei.x.push(x);
+    nuclei.y.push(y);
+    nuclei.radius.push(Math.sqrt(ringArea(polygons[0][0]) / Math.PI) + HALO_GAP);
+    nuclei.logits.push(...nuclei.names.map(name => properties.measurements[`logit(${name})`]));
   }
+  updateHalo(layer, start);
+}
+
+// class probabilities of nucleus i at the current temperature
+function nucleusProbs(nuclei, i) {
+  const k = nuclei.names.length, temperature = 2 ** Number($("temperature").value);
+  const scaled = nuclei.logits.slice(i * k, (i + 1) * k).map(logit => logit / temperature), top = Math.max(...scaled);
+  const exps = scaled.map(value => Math.exp(value - top)), total = exps.reduce((sum, value) => sum + value, 0);
+  return exps.map(value => value / total);
+}
+
+// ring the nuclei from index `from` on whose top two class probabilities are closer than the margin; from 0 rebuilds the rings
+function updateHalo(layer, from = 0) {
+  const nuclei = layer.nuclei;
+  if (!nuclei) return;
+  $("uncertainty").hidden = false;
+  const halo = layerClass(layer, UNCERTAIN, HALO_COLOR, true);
+  halo.halo = true;
+  if (!from) {
+    halo.paths.clear();
+    halo.overview.context.clearRect(0, 0, halo.overview.canvas.width, halo.overview.canvas.height);
+    [halo.count, halo.review, halo.next] = [0, [], 0];
+  }
+  const marginBelow = Number($("margin").value);
+  for (let i = from; i < nuclei.x.length; i++) {
+    const [top, second = 0] = nucleusProbs(nuclei, i).sort((a, b) => b - a);
+    if (top - second >= marginBelow) continue;
+    const [x, y, radius] = [nuclei.x[i], nuclei.y[i], nuclei.radius[i]];
+    const key = `${Math.floor(x / CELL)},${Math.floor(y / CELL)}`;
+    if (!halo.paths.has(key)) halo.paths.set(key, new Path2D());
+    halo.paths.get(key).moveTo(x + radius, y);
+    halo.paths.get(key).arc(x, y, radius, 0, 2 * Math.PI);
+    halo.overview.context.fillRect(Math.floor(x / OVERVIEW), Math.floor(y / OVERVIEW), 1, 1);
+    halo.count++;
+    halo.review.push({i, margin: top - second});
+  }
+  halo.sorted = false;
+}
+
+const showSlider = (id, format) => { $(`${id}-value`).textContent = format(Number($(id).value)); };
+for (const [id, format] of [["temperature", value => (2 ** value).toFixed(2)], ["margin", value => value.toFixed(2)]]) {
+  showSlider(id, format);
+  $(id).addEventListener("input", () => {
+    showSlider(id, format);
+    for (const layer of Object.values(layersBySlide).flat()) { updateHalo(layer); if (layer.preview) updateHalo(layer.preview); }
+    renderLayers();
+    draw();
+  });
 }
 
 // a FeatureCollection, a Feature, or QuPath's plain feature array
@@ -1116,13 +1226,14 @@ async function addLayer(name, files) {
 
 // a folder is re-listed every few seconds, and GeoJSON files new since are added to its layer;
 // listFolder gives [{name, read}] with read() returning the file's features
+const version = file => `${file.size}:${file.lastModified}`;
 async function watchFolder(layer, listFolder) {
   layer.watched = true;
   renderLayers();
   while (!layer.removed) {
     let fresh;
     try {
-      fresh = (await listFolder()).filter(({name}) => isGeoJSON(name) && !layer.files.has(name));
+      fresh = (await listFolder()).filter(({name, file}) => isGeoJSON(name) && !layer.files.has(name) && layer.failed?.get(name) !== version(file));
     } catch (error) {
       $("loading").hidden = false;
       $("loading").textContent = `stopped watching ${layer.name}: ${error.message}`;
@@ -1130,11 +1241,14 @@ async function watchFolder(layer, listFolder) {
       renderLayers();
       return;
     }
-    for (const {name, read} of fresh.sort((a, b) => a.name.localeCompare(b.name))) {
+    for (const {name, file} of fresh.sort((a, b) => a.name.localeCompare(b.name))) {
       try {
-        addFeatures(layer, await read());
+        if (file.size < STREAM_BYTES) addFeatures(layer, await readFeatures(file));
+        else for await (const [features] of streamFeatures(file)) addFeatures(layer, features);
         layer.files.add(name);
-      } catch {}  // a file being replaced is retried on the next pass
+      } catch {
+        (layer.failed ??= new Map()).set(name, version(file));  // a file being replaced is retried once it changes
+      }
     }
     if (fresh.length) { renderLayers(); draw(); }
     await sleep(WATCH_INTERVAL_MS);
@@ -1147,7 +1261,7 @@ async function watchFolderHandle(folder) {
   const listFolder = async () => {
     const files = [];
     for await (const entry of folder.values())
-      if (entry.kind === "file") files.push({name: entry.name, read: async () => readFeatures(await entry.getFile())});
+      if (entry.kind === "file") files.push({name: entry.name, file: await entry.getFile()});
     return files;
   };
   await watchFolder(newLayer(folder.name), listFolder);
@@ -1193,6 +1307,27 @@ function statsNote(stats) {
   return note;
 }
 
+// centre the main pane on the next ringed nucleus, least confident first, and say its class probabilities
+function reviewButton(layer, halo) {
+  const button = document.createElement("button");
+  button.className = "review";
+  button.textContent = halo.next ? `next uncertain (${halo.next} of ${halo.review.length} seen)` : "review, least confident first";
+  button.disabled = !halo.review.length;
+  button.addEventListener("click", () => {
+    if (!halo.sorted) { halo.review.sort((a, b) => a.margin - b.margin); halo.sorted = true; }
+    const {i} = halo.review[halo.next % halo.review.length], nuclei = layer.nuclei;
+    halo.next++;
+    halo.visible = true;
+    viewer.viewport.zoomTo(viewer.viewport.imageToViewportZoom(REVIEW_SCALE));
+    viewer.viewport.panTo(viewer.viewport.imageToViewportCoordinates(nuclei.x[i], nuclei.y[i]));
+    $("loading").hidden = false;
+    $("loading").textContent = nucleusProbs(nuclei, i).map((p, k) => `${nuclei.names[k]} ${p.toFixed(2)}`).join("   ");
+    renderLayers();
+    draw();
+  });
+  return button;
+}
+
 function renderLayers() {
   $("layers").replaceChildren();
   for (const layer of layers) {
@@ -1215,7 +1350,7 @@ function renderLayers() {
       if (layer.running) detection.stop = true;
       layer.removed = true; layers.splice(layers.indexOf(layer), 1); renderLayers(); draw(); });
     $("layers").append(heading);
-    for (const cls of layer.classes.values()) {
+    for (const cls of [...layer.classes.values()].sort((a, b) => !!a.halo - !!b.halo)) {
       const label = document.createElement("label");
       label.innerHTML = `<input type="checkbox"><span class="swatch" style="background: rgb(${cls.color})"></span><span></span><span class="count">${cls.count.toLocaleString()}</span>`;
       const checkbox = label.firstChild;
@@ -1223,6 +1358,7 @@ function renderLayers() {
       checkbox.addEventListener("change", () => { cls.visible = checkbox.checked; if (!cls.detection) renderLayers(); draw(); });
       label.children[2].textContent = cls.name;
       $("layers").append(label);
+      if (cls.halo) $("layers").append(reviewButton(layer, cls));
     }
     const stats = lymphocyteStats(layer);
     if (stats) $("layers").append(statsNote(stats));
@@ -1506,7 +1642,9 @@ function drawPane({viewer, ctx}) {
   // annotations such as ROIs go last, with a dark halo, so nuclei never hide them
   const previewClasses = layer => [...layer.preview?.classes.values() ?? []].filter(cls => layer.classes.get(cls.name)?.visible ?? true);
   const visibleClasses = layers.flatMap(layer => [...layer.classes.values(), ...previewClasses(layer)]).filter(cls => cls.visible);
-  for (const cls of visibleClasses.sort((a, b) => b.detection - a.detection)) {
+  // halos go under the class outlines, but over the class dots so uncertain areas show when zoomed out
+  const order = cls => !cls.detection ? 3 : cls.halo ? (nucleiTooSmall ? 2 : 0) : 1;
+  for (const cls of visibleClasses.sort((a, b) => order(a) - order(b))) {
     if (cls.detection && nucleiTooSmall) {
       const {canvas} = cls.overview;
       ctx.drawImage(canvas, 0, 0, canvas.width * OVERVIEW, canvas.height * OVERVIEW);
@@ -1786,6 +1924,19 @@ async function readRegion(fromSlide, x, y, size) {
   return rgb;
 }
 
+// add one view's nucleus-class log-probabilities ([count, classes, plane], probabilities clamped as in inference.predict) to the running sum
+const MIN_PROBABILITY = 2 ** -24;
+function addClassLogProbabilities(logSum, probabilities, count, channels, plane) {
+  const nClasses = channels - 4;
+  logSum ??= new Float32Array(count * nClasses * plane);
+  for (let t = 0; t < count; t++)
+    for (let k = 0; k < nClasses; k++) {
+      const from = (t * channels + 4 + k) * plane, to = (t * nClasses + k) * plane;
+      for (let i = 0; i < plane; i++) logSum[to + i] += Math.log(Math.max(probabilities[from + i], MIN_PROBABILITY));
+    }
+  return logSum;
+}
+
 // view-averaged model outputs of the tiles of an image: float16 background and foreground and each pixel's nucleus class,
 // or for CellViT the nucleus mask, HV maps and each pixel's type
 async function predictImage(rgb, width, height, views, onBatch) {
@@ -1795,7 +1946,7 @@ async function predictImage(rgb, width, height, views, onBatch) {
   const n = width * height;
   const maps = cellvit
     ? {nucleus: new Uint8Array(n), horizontal: new Float32Array(n), vertical: new Float32Array(n), pixelClass: new Uint8Array(n)}
-    : {background: new Uint16Array(n), foreground: new Uint16Array(n), pixelClass: new Uint8Array(n)};
+    : {background: new Uint16Array(n), foreground: new Uint16Array(n), pixelClass: new Uint8Array(n), classLogProbs: new Uint16Array(n * model.classes.length)};
   const nTiles = Math.ceil(height / crop) * Math.ceil(width / crop);
   const inputMaps = [], outputMaps = [];
   for (let view = 0; view < views; view++) [inputMaps[view], outputMaps[view]] = [dihedralMap(tile, view, false), dihedralMap(crop, view, true)];
@@ -1803,7 +1954,7 @@ async function predictImage(rgb, width, height, views, onBatch) {
     if (detection.stop) throw new Error("stopped");
     const count = Math.min(batch, nTiles - first);
     const tiles = tileBatch(rgb, width, height, first, count, tile, crop);
-    let sum = null;
+    let sum = null, logSum = null;
     for (let view = 0; view < views; view++) {
       const input = view ? gatherPlanes(tiles, inputMaps[view]) : tiles;
       const outputs = await session.run({[session.inputNames[0]]: new ort.Tensor("float32", input, [count, 3, tile, tile])});
@@ -1811,10 +1962,12 @@ async function predictImage(rgb, width, height, views, onBatch) {
       const aligned = view ? gatherPlanes(probabilities, outputMaps[view]) : probabilities;
       if (!sum) sum = Float32Array.from(aligned);
       else for (let i = 0; i < sum.length; i++) sum[i] += aligned[i];
+      if (!cellvit) logSum = addClassLogProbabilities(logSum, aligned, count, channels, crop * crop);
     }
     if (views > 1) for (let i = 0; i < sum.length; i++) sum[i] /= views;
+    if (views > 1 && logSum) for (let i = 0; i < logSum.length; i++) logSum[i] /= views;
     if (cellvit) stitchHV(sum, first, count, channels, width, height, maps, crop);
-    else stitchBatch(sum, first, count, channels, width, height, maps);
+    else stitchBatch(sum, logSum, first, count, channels, width, height, maps);
     onBatch(count, maps);
   }
   return maps;
@@ -1857,8 +2010,9 @@ async function detectNuclei() {
   layer.running = true;
   renderLayers();
   const wakeLock = await navigator.wakeLock?.request("screen").catch(() => null);
-  const runKey = `${forSlide.name}|${checkpoint}|${views}|${hashText(JSON.stringify(rings))}`;
+  const runKey = `${forSlide.name}|${checkpoint}|${views}|probs|${hashText(JSON.stringify(rings))}`;
   const clearPreview = () => {
+    layer.preview.nuclei = null;
     for (const cls of layer.preview.classes.values()) {
       cls.paths.clear();
       cls.overview.context.clearRect(0, 0, cls.overview.canvas.width, cls.overview.canvas.height);
@@ -1895,7 +2049,8 @@ async function detectNuclei() {
         const doneRows = Math.floor(blockTilesDone / tilesPerRow) * crop, keepRows = doneRows - PREVIEW_MARGIN;
         if (previewBusy || doneRows >= outSize || keepRows - previewedRows < crop) return;
         const firstRow = Math.max(0, previewedRows - PREVIEW_MARGIN), [start, end] = [firstRow * outSize, doneRows * outSize];
-        const band = Object.fromEntries(Object.entries(maps).map(([name, map]) => [name, map.slice(start, end)]));
+        // maps hold one or more values per pixel (pixel-major), so each is cut at its own stride
+        const band = Object.fromEntries(Object.entries(maps).map(([name, map]) => { const stride = map.length / (outSize * outSize); return [name, map.slice(start * stride, end * stride)]; }));
         const toSlide = row => y - CONTEXT + row * BLOCK_READ / outSize;
         const block = {...band, width: outSize, height: doneRows - firstRow, x, y, scale: BLOCK_READ / outSize, ring, rings, depths, firstRow, keepFrom: toSlide(previewedRows), keepTo: toSlide(keepRows)};
         previewedRows = keepRows;
@@ -1922,7 +2077,7 @@ async function detectNuclei() {
       });
     }
     await pending;
-    const count = [...layer.classes.values()].reduce((sum, cls) => sum + cls.count, 0);
+    const count = [...layer.classes.values()].reduce((sum, cls) => sum + (cls.halo ? 0 : cls.count), 0);
     setModelStatus(`found ${count.toLocaleString()} nuclei in ${duration((performance.now() - started) / 1000)}. Save them with ⤓ next to the layer name.`);
   } catch (error) {
     await pending.catch(() => {});
