@@ -29,8 +29,16 @@
   #panel .note { margin: 6px 0 0; color: #aaa; font-style: italic; }
   #panel input[type=range] { flex: 1; min-width: 0; }
   #panel button.review { width: 100%; margin: 2px 0 4px; }
+  #panel .choices { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin: 4px 0; }
+  #panel .choices button { display: flex; align-items: center; gap: 6px; text-align: left; overflow: hidden; white-space: nowrap; }
+  #panel .choices kbd { color: #999; font: inherit; }
   #panel .stats { white-space: pre-line; font-style: normal; font-variant-numeric: tabular-nums; }
   #status { bottom: 8px; left: 8px; font-variant-numeric: tabular-nums; }
+  #tabs { top: 8px; left: 8px; max-width: calc(100% - 300px); display: flex; gap: 4px; overflow-x: auto; padding: 4px; }
+  #tabs .tab { flex: none; display: flex; align-items: center; gap: 6px; padding: 3px 2px 3px 8px; background: #333; border: 1px solid #555; border-radius: 4px; color: #ccc; white-space: nowrap; cursor: pointer; }
+  #tabs .tab.active { background: #066; border-color: #0ff; color: #fff; }
+  #tabs .badge { color: #8cf; font-size: 11px; font-variant-numeric: tabular-nums; }
+  #tabs button { font: inherit; padding: 0 4px; background: none; border: none; color: #999; cursor: pointer; }
   #drop { position: fixed; inset: 0; z-index: 10; display: grid; place-items: center; background: rgba(0, 0, 0, 0.6); border: 3px dashed #888; font-size: 20px; }
   [hidden] { display: none !important; }
   #drop * { pointer-events: none; }
@@ -40,12 +48,11 @@
 <div id="viewer"></div>
 <div id="viewer2" hidden></div>
 <div id="panel" class="box">
-  <select id="slide" aria-label="slide"></select>
   <select id="compare" aria-label="side by side with" title="a second slide on the right, panned and zoomed together; layers are drawn on both"></select>
-  <p id="no-slides" class="note" hidden>Open a slide (.tiff) to start.</p>
+  <p id="no-slides" class="note" hidden>Open a slide (.tiff, .svs) to start.</p>
   <div class="buttons">
-    <button id="open-slide" title="TIFF slides on this computer; they are read in place, never uploaded">Open slide</button>
-    <button id="open-slide-folder" title="every TIFF slide in a folder, listed at once; each is read when picked">Open folder</button>
+    <button id="open-slide" title="TIFF or SVS slides on this computer; they are read in place, never uploaded">Open slide</button>
+    <button id="open-slide-folder" title="every TIFF or SVS slide in a folder, listed at once; each is read when picked">Open folder</button>
   </div>
   <div class="buttons" id="layer-buttons">
     <button id="add-files" title="one layer per file">Add GeoJSON</button>
@@ -65,7 +72,7 @@
       <option value="8">8 views (as published, slowest)</option>
     </select>
     <div class="buttons">
-      <button id="run-model" title="finds the nuclei in the ROIs and annotations shown on this slide, or in the current view if there are none">Detect nuclei</button>
+      <button id="run-model" title="finds the nuclei in the ROIs and annotations shown on this slide, or in the current view if there are none; runs on other slides wait their turn, and removing the layer stops one">Detect nuclei</button>
     </div>
     <p id="model-status" class="note" hidden></p>
   </div>
@@ -85,6 +92,7 @@
   <p id="drop-hint" class="note">or drop slides, GeoJSON files or folders anywhere</p>
 </div>
 <div id="status" class="box"></div>
+<div id="tabs" class="box" role="tablist" hidden></div>
 <div id="drop" hidden><span>Drop slides, GeoJSON files or folders</span></div>
 <script src="https://cdn.jsdelivr.net/npm/openseadragon@5.0.1/build/openseadragon/openseadragon.min.js" integrity="sha384-Vh4b5HGyvDGMp6lVeYZe1zCqqyhS8oLTUC4SKIWmOuYH7nEuWiGIpSACopwLu9UD" crossorigin="anonymous"></script>
 <script src="https://cdn.jsdelivr.net/npm/geotiff@3.0.5/dist-browser/geotiff.js" integrity="sha384-QchpYxK+DqZYCChtK4SebrECTZEIQ0ahLhme9vwraN6KNxOGwtS66BG72wo1HQDN" crossorigin="anonymous"></script>
@@ -738,6 +746,9 @@ const DEFAULT_COLOR = [255, 255, 0];
 const UNCERTAIN = "uncertain class";
 const HALO_COLOR = [255, 255, 255];
 const HALO_GAP = 3;  // slide px between a nucleus and its uncertainty ring
+const NOT_NUCLEUS = "not a nucleus";
+const NOT_NUCLEUS_COLOR = [140, 140, 140];
+const SELECTED_COLOR = [0, 255, 255];
 const REVIEW_SCALE = 2;  // screen px per slide px when stepping through uncertain nuclei
 const WATCH_INTERVAL_MS = 5000;
 
@@ -778,32 +789,74 @@ for (const pane of panes) {
   });
 }
 viewer2.addHandler("open", () => follow(viewer, viewer2));
-viewer.addHandler("open", () => { if (compareSlide) follow(viewer, viewer2); });
+viewer.addHandler("open", () => {
+  if (slide?.bounds) viewer.viewport.fitBounds(slide.bounds, true);
+  if (compareSlide) follow(viewer, viewer2);
+});
 
-// slide pickers over the TIFFs opened so far; the slides are kept in the URL hash as "slide" or "slide|compared", and loaded layers are kept per slide
+// one tab per slide opened so far, each a workspace keeping its layers, ROIs and view; the slides are kept in the URL hash as "slide" or "slide|compared"
 const slides = [];
 const layersBySlide = {};
 let slide = null;
 let compareSlide = null;
 let layers = [];
+let detection = null;  // the nucleus detection run using the GPU: {layer, slide, ..., stop}
+const queue = [];  // runs waiting for it, in order
 function listSlides() {
   slides.sort((a, b) => a.name.localeCompare(b.name, undefined, {numeric: true}));
-  $("slide").replaceChildren(...slides.map(({name}) => new Option(name, name)));
+  renderTabs();
   $("compare").replaceChildren(new Option("side by side with…", ""), ...slides.map(({name}) => new Option(name, name)));
-  $("slide").value = slide?.name ?? "";
   $("compare").value = compareSlide?.name ?? "";
-  $("slide").hidden = $("compare").hidden = $("layer-buttons").hidden = $("roi-buttons").hidden = !slides.length;
+  $("tabs").hidden = $("compare").hidden = $("layer-buttons").hidden = $("roi-buttons").hidden = !slides.length;
   $("detect").hidden = !slides.length || !$("model").options.length;
   $("no-slides").hidden = slides.length > 0;
 }
 listSlides();
 const setHash = (name, compareName) => { location.hash = encodeURIComponent([name, compareName].filter(Boolean).join("|")); };
-$("slide").addEventListener("change", () => {
+function pickSlide(name) {
   // the compared slide follows to the same slide number, e.g. 1_norm | 1_unnorm -> 2_norm | 2_unnorm
-  const number = $("slide").value.match(/^\d+/)?.[0];
+  const number = name.match(/^\d+/)?.[0];
   const sameNumber = number && compareSlide?.name.replace(/^\d+/, number);
-  setHash($("slide").value, slides.some(({name}) => name === sameNumber) ? sameNumber : compareSlide?.name);
-});
+  setHash(name, slides.some(({name}) => name === sameNumber) ? sameNumber : compareSlide?.name);
+}
+function renderTabs() {
+  $("tabs").replaceChildren(...slides.map(entry => {
+    const tab = document.createElement("div");
+    tab.className = entry === slide ? "tab active" : "tab";
+    tab.setAttribute("role", "tab");
+    tab.innerHTML = `<span></span><span class="badge"></span><button title="close this slide and its layers">×</button>`;
+    const [name, badge, close] = tab.children;
+    name.textContent = tab.title = entry.name;
+    const job = [detection, ...queue].find(job => job?.slide === entry);
+    badge.textContent = job === detection && job ? `${job.percent ?? 0}%` : job ? "queued" : "";
+    tab.addEventListener("click", () => pickSlide(entry.name));
+    close.addEventListener("click", event => { event.stopPropagation(); closeSlide(entry); });
+    return tab;
+  }));
+  $("tabs").querySelector(".active")?.scrollIntoView({block: "nearest", inline: "nearest"});
+}
+function closeSlide(entry) {
+  const entryLayers = layersBySlide[entry.name] ?? [];
+  const busy = entryLayers.some(layer => layer.running || layer.queued);
+  const unsaved = entryLayers.some(layer => (layer.drawn?.length || layer.featureParts?.length) && !layer.saved || layer.labels?.size && !layer.labelsSaved);
+  if ((busy || unsaved) && !confirm(`Close ${entry.name}? ${busy ? "Its nucleus detection stops and" : "Its"} unsaved ROIs and nuclei are discarded.`)) return;
+  for (const layer of [...entryLayers]) removeLayer(layer);
+  delete layersBySlide[entry.name];
+  const index = slides.indexOf(entry);
+  slides.splice(index, 1);
+  if (compareSlide === entry) compareSlide = null;
+  if (slide === entry) {
+    slide = null;
+    layers = [];
+    viewer.close();
+    renderLayers();
+    draw();
+    const next = slides[Math.min(index, slides.length - 1)];
+    if (next) setHash(next.name, compareSlide?.name);
+    else { history.replaceState(null, "", location.pathname); document.title = "Slide viewer"; document.body.classList.remove("split"); $("viewer2").hidden = true; }
+  } else if (slide) setHash(slide.name, compareSlide?.name);
+  listSlides();
+}
 $("compare").addEventListener("change", () => setHash(slide.name, $("compare").value));
 window.addEventListener("hashchange", openSlide);
 
@@ -957,7 +1010,7 @@ function addSlideFiles(files, from) {
   const added = files.filter(file => isTIFF(file.name)).map(file => ({name: slideName(file), file}));
   if (!added.length) {
     $("loading").hidden = !from;
-    $("loading").textContent = `no TIFF slides in ${from}`;
+    $("loading").textContent = `no TIFF or SVS slides in ${from}`;
     return;
   }
   for (const entry of added) {
@@ -1016,7 +1069,7 @@ async function openSlide() {
     } catch (error) {
       entry.opening = null;
       $("loading").textContent = `could not open ${entry.name}: ${error.message}`;
-      $("slide").value = slide?.name ?? "";
+      renderTabs();
       return;
     }
   }
@@ -1029,9 +1082,12 @@ async function openSlide() {
   compareSlide = nextCompare;
   if (nextSlide === slide) return draw();
 
+  if (slide) slide.bounds = viewer.viewport.getBounds();
   slide = nextSlide;
+  selected = null;
   [draft, draftStrokes] = [[], []];
-  $("slide").value = document.title = slide.name;
+  document.title = slide.name;
+  renderTabs();
   layers = layersBySlide[slide.name] ??= [];
   renderLayers();
   viewer.open(slide.source);
@@ -1307,25 +1363,116 @@ function statsNote(stats) {
   return note;
 }
 
-// centre the main pane on the next ringed nucleus, least confident first, and say its class probabilities
 function reviewButton(layer, halo) {
   const button = document.createElement("button");
   button.className = "review";
   button.textContent = halo.next ? `next uncertain (${halo.next} of ${halo.review.length} seen)` : "review, least confident first";
   button.disabled = !halo.review.length;
-  button.addEventListener("click", () => {
-    if (!halo.sorted) { halo.review.sort((a, b) => a.margin - b.margin); halo.sorted = true; }
-    const {i} = halo.review[halo.next % halo.review.length], nuclei = layer.nuclei;
-    halo.next++;
+  button.addEventListener("click", () => reviewNext(layer, halo));
+  return button;
+}
+
+// centre the main pane on the next ringed nucleus not labelled yet, least confident first, and select it
+function reviewNext(layer, halo) {
+  if (!halo.sorted) { halo.review.sort((a, b) => a.margin - b.margin); halo.sorted = true; }
+  for (let tries = 0; tries < halo.review.length; tries++) {
+    const {i} = halo.review[halo.next++ % halo.review.length];
+    if (layer.labels?.has(i)) continue;
     halo.visible = true;
     viewer.viewport.zoomTo(viewer.viewport.imageToViewportZoom(REVIEW_SCALE));
-    viewer.viewport.panTo(viewer.viewport.imageToViewportCoordinates(nuclei.x[i], nuclei.y[i]));
-    $("loading").hidden = false;
-    $("loading").textContent = nucleusProbs(nuclei, i).map((p, k) => `${nuclei.names[k]} ${p.toFixed(2)}`).join("   ");
-    renderLayers();
-    draw();
+    viewer.viewport.panTo(viewer.viewport.imageToViewportCoordinates(layer.nuclei.x[i], layer.nuclei.y[i]));
+    return select(layer, i, halo);
+  }
+  select(null);
+}
+
+// the nucleus being reviewed or clicked, which the class buttons (keys 1-9, 0 for not a nucleus) label
+let selected = null;  // {layer, i, halo}; halo when reviewing, so labelling moves on to the next one
+function select(layer, i, halo = null) {
+  selected = layer ? {layer, i, halo} : null;
+  renderLayers();
+  $("layers").querySelector(".choices")?.scrollIntoView({block: "nearest"});
+  draw();
+}
+const labelColor = (layer, label) => label === NOT_NUCLEUS ? NOT_NUCLEUS_COLOR : layer.classes.get(label)?.color ?? DEFAULT_COLOR;
+function labelNucleus(label) {
+  const {layer, i, halo} = selected;
+  (layer.labels ??= new Map()).set(i, label);
+  layer.labelsSaved = false;
+  if (halo) reviewNext(layer, halo);
+  else select(null);
+}
+function skipNucleus() {
+  if (selected?.halo) reviewNext(selected.layer, selected.halo);
+  else select(null);
+}
+
+// the selected nucleus's class probabilities, and a button per class to label it with
+function labelChoices(layer, i) {
+  const nuclei = layer.nuclei, probs = nucleusProbs(nuclei, i), label = layer.labels?.get(i);
+  const note = document.createElement("p");
+  note.className = "note";
+  note.textContent = nuclei.names.map((name, k) => [name, probs[k]]).sort((a, b) => b[1] - a[1]).map(([name, p]) => `${name} ${p.toFixed(2)}`).join(" · ")
+    + (label ? `. Labelled ${label}.` : "");
+  const choices = document.createElement("div");
+  choices.className = "choices";
+  for (const [k, name] of [...nuclei.names, NOT_NUCLEUS].entries()) {
+    const button = document.createElement("button");
+    button.innerHTML = `<kbd></kbd><span class="swatch" style="background: rgb(${labelColor(layer, name)})"></span><span></span>`;
+    button.children[0].textContent = k < nuclei.names.length ? k + 1 : 0;
+    button.children[2].textContent = button.title = name;
+    if (name === label) button.classList.add("active");
+    button.addEventListener("click", () => labelNucleus(name));
+    choices.append(button);
+  }
+  const skip = document.createElement("button");
+  skip.innerHTML = `<kbd>␣</kbd><span>${selected.halo ? "skip" : "done"}</span>`;
+  skip.addEventListener("click", skipNucleus);
+  choices.append(skip);
+  return [note, choices];
+}
+
+// the labelled nuclei as points with their label, the predicted class and the class logits, for training and for QuPath
+async function saveLabels(layer) {
+  const nuclei = layer.nuclei, k = nuclei.names.length;
+  const features = [...layer.labels].map(([i, label]) => {
+    const logits = nuclei.logits.slice(i * k, (i + 1) * k);
+    return {type: "Feature", geometry: {type: "Point", coordinates: [nuclei.x[i], nuclei.y[i]]}, properties: {
+      objectType: "detection",
+      classification: {name: label, color: labelColor(layer, label)},
+      predictedClass: nuclei.names[logits.indexOf(Math.max(...logits))],
+      measurements: Object.fromEntries(nuclei.names.map((name, c) => [`logit(${name})`, logits[c]])),
+    }};
   });
-  return button;
+  const blob = new Blob([JSON.stringify({type: "FeatureCollection", features})], {type: "application/geo+json"});
+  const base = (layer.fileName ?? `${layer.slide.name}_${layer.name}`).replace(/\.geojson$/i, "");
+  if (await saveFile(blob, `${base}_labels.geojson`)) layer.labelsSaved = true;
+  renderLayers();
+}
+
+// the nucleus under a click, among the shown layers with class logits, when zoomed in enough to see outlines
+function nucleusAt(x, y) {
+  if (viewer.viewport.viewportToImageZoom(viewer.viewport.getZoom(true)) < MIN_DETECTION_SCALE) return null;
+  let best = null;
+  for (const layer of layers) {
+    const nuclei = layer.nuclei;
+    if (!nuclei || ![...layer.classes.values()].some(cls => cls.detection && !cls.halo && cls.visible)) continue;
+    for (let i = 0; i < nuclei.x.length; i++) {
+      const squared = (nuclei.x[i] - x) ** 2 + (nuclei.y[i] - y) ** 2, radius = nuclei.radius[i] - HALO_GAP + 2;
+      if (squared < radius ** 2 && (!best || squared < best.squared)) best = {layer, i, squared};
+    }
+  }
+  return best;
+}
+
+function removeLayer(layer) {
+  if (selected?.layer === layer) selected = null;
+  if (layer.running) detection.stop = true;
+  if (layer.queued) queue.splice(queue.findIndex(job => job.layer === layer), 1);
+  layer.removed = true;
+  const owner = layersBySlide[layer.slide.name] ?? layers;
+  if (owner.includes(layer)) owner.splice(owner.indexOf(layer), 1);
+  renderTabs();
 }
 
 function renderLayers() {
@@ -1334,9 +1481,9 @@ function renderLayers() {
     const heading = document.createElement("h4");
     heading.innerHTML = `<span></span><button title="save these nuclei as a GeoJSON file (QuPath detections)">⤓</button><button title="remove layer">×</button>`;
     const [title, saveButton, removeButton] = heading.children;
-    title.textContent = heading.title = layer.watched ? `${layer.name} (${layer.files.size} files, live)` : layer.running ? `${layer.name} (running)`
+    title.textContent = heading.title = layer.watched ? `${layer.name} (${layer.files.size} files, live)` : layer.running ? `${layer.name} (running)` : layer.queued ? `${layer.name} (queued)`
       : (layer.drawn || layer.featureParts) && !layer.saved ? `${layer.name} (not saved)` : layer.name;
-    saveButton.hidden = !layer.featureParts;
+    saveButton.hidden = !layer.featureParts || layer.queued;
     saveButton.addEventListener("click", async () => {
       const parts = layer.featureParts.flatMap((part, i) => i ? [",", part] : [part]);
       const blob = new Blob(['{"type": "FeatureCollection", "features": [', ...parts, "]}"], {type: "application/geo+json"});
@@ -1345,10 +1492,10 @@ function renderLayers() {
     });
     removeButton.addEventListener("click", () => {
       if (layer.running && !confirm("Stop detecting nuclei and discard them?")) return;
-      if (!layer.running && layer.featureParts && !layer.saved && !confirm("Discard these nuclei? They are not saved.")) return;
+      if (!layer.running && !layer.queued && layer.featureParts && !layer.saved && !confirm("Discard these nuclei? They are not saved.")) return;
       if (layer.drawn && !layer.saved && !confirm("Discard the ROIs drawn on this slide? They are not saved.")) return;
-      if (layer.running) detection.stop = true;
-      layer.removed = true; layers.splice(layers.indexOf(layer), 1); renderLayers(); draw(); });
+      if (layer.labels?.size && !layer.labelsSaved && !confirm("Discard the nuclei labelled in this layer? They are not saved.")) return;
+      removeLayer(layer); renderLayers(); draw(); });
     $("layers").append(heading);
     for (const cls of [...layer.classes.values()].sort((a, b) => !!a.halo - !!b.halo)) {
       const label = document.createElement("label");
@@ -1359,6 +1506,15 @@ function renderLayers() {
       label.children[2].textContent = cls.name;
       $("layers").append(label);
       if (cls.halo) $("layers").append(reviewButton(layer, cls));
+    }
+    if (selected?.layer === layer) $("layers").append(...labelChoices(layer, selected.i));
+    if (layer.labels?.size) {
+      const save = document.createElement("button");
+      save.className = "review";
+      save.textContent = `save ${layer.labels.size.toLocaleString()} labelled nuclei${layer.labelsSaved ? "" : " (not saved)"}`;
+      save.title = "the nuclei labelled by hand, as points with the label, the predicted class and the class logits";
+      save.addEventListener("click", () => saveLabels(layer));
+      $("layers").append(save);
     }
     const stats = lymphocyteStats(layer);
     if (stats) $("layers").append(statsNote(stats));
@@ -1524,6 +1680,26 @@ viewer.addHandler("canvas-release", event => {
 });
 viewer.addHandler("canvas-double-click", () => { if (drawing) finishDraft(); });
 
+// a click on a nucleus selects it for labelling, instead of zooming
+viewer.addHandler("canvas-click", event => {
+  if (drawing || !event.quick) return;
+  const point = viewer.viewport.viewerElementToImageCoordinates(event.position), hit = nucleusAt(point.x, point.y);
+  if (!hit && !selected) return;
+  event.preventDefaultAction = true;
+  hit ? select(hit.layer, hit.i) : select(null);
+});
+window.addEventListener("keydown", event => {
+  if (drawing || !selected || event.metaKey || event.ctrlKey || event.altKey || ["INPUT", "SELECT", "TEXTAREA"].includes(event.target.tagName)) return;
+  const names = selected.layer.nuclei.names, digit = Number(event.key);
+  if (event.key === "0") labelNucleus(NOT_NUCLEUS);
+  else if (Number.isInteger(digit) && digit >= 1 && digit <= names.length) labelNucleus(names[digit - 1]);
+  else if (event.key === " ") skipNucleus();
+  else if (event.key === "Escape") select(null);
+  else return;
+  event.preventDefault();
+  event.stopPropagation();
+}, true);
+
 window.addEventListener("keydown", event => {
   if (!drawing) return;
   if (event.key === "Enter") finishDraft();
@@ -1600,8 +1776,8 @@ $("save-roi").addEventListener("click", async () => {
   renderLayers();
 });
 window.addEventListener("beforeunload", event => {
-  const unsaved = layer => (layer.drawn?.length || layer.featureParts?.length) && !layer.saved;
-  if (detection || Object.values(layersBySlide).flat().some(unsaved)) event.preventDefault();
+  const unsaved = layer => (layer.drawn?.length || layer.featureParts?.length) && !layer.saved || layer.labels?.size && !layer.labelsSaved;
+  if (detection || queue.length || Object.values(layersBySlide).flat().some(unsaved)) event.preventDefault();
 });
 
 function* visiblePaths(cls, topLeft, bottomRight) {
@@ -1659,6 +1835,30 @@ function drawPane({viewer, ctx}) {
     ctx.lineWidth = (cls.detection ? 1.5 : 3) / scale;
     for (const path of visiblePaths(cls, topLeft, bottomRight)) ctx.stroke(path);
   }
+  if (!nucleiTooSmall) {
+    const inView = (x, y) => x > topLeft.x - 50 && x < bottomRight.x + 50 && y > topLeft.y - 50 && y < bottomRight.y + 50;
+    for (const layer of layers) for (const [i, label] of layer.labels ?? []) {
+      const x = layer.nuclei.x[i], y = layer.nuclei.y[i], radius = layer.nuclei.radius[i] - HALO_GAP;
+      if (!inView(x, y)) continue;
+      ctx.beginPath();
+      ctx.arc(x, y, radius, 0, 2 * Math.PI);
+      ctx.fillStyle = `rgba(${labelColor(layer, label)}, 0.45)`;
+      ctx.fill();
+      ctx.strokeStyle = `rgb(${labelColor(layer, label)})`;
+      ctx.lineWidth = 2.5 / scale;
+      ctx.stroke();
+    }
+  }
+  if (selected && layers.includes(selected.layer)) {
+    const {nuclei} = selected.layer, i = selected.i;
+    ctx.beginPath();
+    ctx.arc(nuclei.x[i], nuclei.y[i], nuclei.radius[i] + 3, 0, 2 * Math.PI);
+    ctx.setLineDash([5 / scale, 3 / scale]);
+    ctx.strokeStyle = `rgb(${SELECTED_COLOR})`;
+    ctx.lineWidth = 2.5 / scale;
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
   if (viewer !== panes[0].viewer) return;
 
   // the ROI being drawn, with a line to the pointer and its first corner filled when a click would close it
@@ -1713,7 +1913,6 @@ const SPAN_GAP = 2 ** 20;  // weights closer than this in the checkpoint are fet
 const MAX_SPAN = 32 * 2 ** 20;  // bytes per request at most, so large checkpoints download in parallel and in pieces
 const PARALLEL_FETCHES = 4;
 const BLOCK_READ = BLOCK + 2 * CONTEXT;  // slide px per side read for a block
-let detection = null;  // {layer, stop} while running
 
 for (const [checkpoint, {label}] of Object.entries(MODELS.checkpoints)) $("model").append(new Option(label, checkpoint));
 // CellViT's HV maps are not averaged over flipped views, so it runs one
@@ -1994,21 +2193,40 @@ const PREVIEW_MARGIN = 64;  // model px below a preview band whose nuclei wait f
 
 const duration = seconds => seconds < 90 ? `${Math.round(seconds)} s` : seconds < 5400 ? `${Math.round(seconds / 60)} min` : `${(seconds / 3600).toFixed(1)} h`;
 
-async function detectNuclei() {
+function queueDetection() {
   const checkpoint = $("model").value, model = MODELS.checkpoints[checkpoint], views = model.kind === "cellvit" ? 1 : Number($("views").value);
-  const forSlide = slide, rings = detectionRings();
+  const rings = detectionRings();
   if (!rings.length) return setModelStatus("the view is outside the slide");
-  if (!forSlide.inferenceMpp) return setModelStatus("this slide does not say its resolution (microns per pixel), which the model needs");
+  if (!slide.inferenceMpp) return setModelStatus("this slide does not say its resolution (microns per pixel), which the model needs");
   const {blocks, depths} = regionBlocks(rings);
   if (!blocks.length) return setModelStatus("the regions are empty");
 
   const layer = newLayer(`${model.label} nuclei`);
   layer.featureParts = [];
-  layer.fileName = `${forSlide.name}_${checkpoint}.geojson`;
+  layer.fileName = `${slide.name}_${checkpoint}.geojson`;
+  layer.queued = true;
+  queue.push({layer, slide, checkpoint, model, views, rings, blocks, depths, stop: false});
+  renderLayers();
+  renderTabs();
+  if (detection) setModelStatus(`queued: ${queue.length} run${queue.length > 1 ? "s" : ""} waiting for ${detection.slide.name}`);
+  else runQueue();
+}
+
+async function runQueue() {
+  while (queue.length) {
+    detection = queue.shift();
+    detection.layer.queued = false;
+    await detectNuclei(detection);
+  }
+  detection = null;
+  renderTabs();
+}
+
+async function detectNuclei({layer, slide: forSlide, checkpoint, model, views, rings, blocks, depths}) {
   layer.preview = {classes: new Map(), slide: forSlide};
-  detection = {layer, stop: false};
   layer.running = true;
   renderLayers();
+  renderTabs();
   const wakeLock = await navigator.wakeLock?.request("screen").catch(() => null);
   const runKey = `${forSlide.name}|${checkpoint}|${views}|probs|${hashText(JSON.stringify(rings))}`;
   const clearPreview = () => {
@@ -2030,7 +2248,9 @@ async function detectNuclei() {
   let started, tilesDone = 0, tilesToDo = 0, pending = Promise.resolve(), previewBusy = false;
   const progress = index => {
     const elapsed = (performance.now() - started) / 1000, left = tilesDone ? elapsed / tilesDone * (tilesToDo - tilesDone) : NaN;
-    setModelStatus(`block ${index + 1} of ${blocks.length}, ${Math.floor(100 * tilesDone / tilesToDo)}% done${tilesDone ? `, about ${duration(left)} left` : ""}. Keep this tab open.${session?.gpu === false ? " This browser has no WebGPU, so the model runs on the processor and is very slow: use a recent Chrome, Edge or Safari." : ""}`);
+    const percent = Math.floor(100 * tilesDone / tilesToDo);
+    if (percent !== detection.percent) { detection.percent = percent; renderTabs(); }
+    setModelStatus(`${forSlide.name}: block ${index + 1} of ${blocks.length}, ${percent}% done${tilesDone ? `, about ${duration(left)} left` : ""}. Keep this browser tab open.${queue.length ? ` ${queue.length} more queued.` : ""}${session?.gpu === false ? " This browser has no WebGPU, so the model runs on the processor and is very slow: use a recent Chrome, Edge or Safari." : ""}`);
   };
   try {
     await modelSession(checkpoint);
@@ -2078,30 +2298,20 @@ async function detectNuclei() {
     }
     await pending;
     const count = [...layer.classes.values()].reduce((sum, cls) => sum + (cls.halo ? 0 : cls.count), 0);
-    setModelStatus(`found ${count.toLocaleString()} nuclei in ${duration((performance.now() - started) / 1000)}. Save them with ⤓ next to the layer name.`);
+    setModelStatus(`${forSlide.name}: found ${count.toLocaleString()} nuclei in ${duration((performance.now() - started) / 1000)}. Save them with ⤓ next to the layer name.`);
   } catch (error) {
     await pending.catch(() => {});
-    setModelStatus(detection.stop ? "stopped. Blocks already done are kept: running again on the same regions resumes." : `detection failed: ${error.message}`);
+    setModelStatus(detection.stop ? `${forSlide.name}: stopped. Blocks already done are kept: running again on the same regions resumes.` : `${forSlide.name}: detection failed: ${error.message}`);
   } finally {
     delete layer.preview;
     draw();
     layer.running = false;
-    detection = null;
     wakeLock?.release();
-    $("run-model").textContent = "Detect nuclei";
     renderLayers();
   }
 }
 
-$("run-model").addEventListener("click", () => {
-  if (detection) {
-    detection.stop = true;
-    $("run-model").textContent = "Stopping…";
-    return;
-  }
-  $("run-model").textContent = "Stop";
-  detectNuclei();
-});
+$("run-model").addEventListener("click", queueDetection);
 listSlides();
 openSlide();
 </script>
