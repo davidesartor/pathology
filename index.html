@@ -27,6 +27,7 @@
   #panel .swatch { flex: none; width: 10px; height: 10px; border-radius: 2px; }
   #panel .count { margin-left: auto; padding-left: 12px; color: #999; font-variant-numeric: tabular-nums; }
   #panel .note { margin: 6px 0 0; color: #aaa; font-style: italic; }
+  #panel .stats { white-space: pre-line; font-style: normal; font-variant-numeric: tabular-nums; }
   #status { bottom: 8px; left: 8px; font-variant-numeric: tabular-nums; }
   #drop { position: fixed; inset: 0; z-index: 10; display: grid; place-items: center; background: rgba(0, 0, 0, 0.6); border: 3px dashed #888; font-size: 20px; }
   [hidden] { display: none !important; }
@@ -1031,6 +1032,7 @@ function addPolygon(cls, polygon) {
     const x = exterior.reduce((sum, point) => sum + point[0], 0) / exterior.length;
     const y = exterior.reduce((sum, point) => sum + point[1], 0) / exterior.length;
     cls.overview.context.fillRect(Math.floor(x / OVERVIEW), Math.floor(y / OVERVIEW), 1, 1);
+    (cls.centres ??= []).push(x, y);
   }
 }
 
@@ -1151,6 +1153,46 @@ async function watchFolderHandle(folder) {
   await watchFolder(newLayer(folder.name), listFolder);
 }
 
+// lymphocytes / (lymphocytes + tumor cells) and lymphocytes per mm², over the nuclei inside the ROIs and annotations shown (all nuclei if none)
+const LYMPHOCYTE = /^(lymphocytes?|inflammatory)$/i, TUMOR = /^(tumou?r|neoplastic)$/i;
+const ringArea = ring => Math.abs(ring.reduce((sum, [x0, y0], i) => sum + x0 * ring[(i + 1) % ring.length][1] - ring[(i + 1) % ring.length][0] * y0, 0)) / 2;
+function lymphocyteStats(layer) {
+  const nuclei = [...layer.classes.values()].filter(cls => cls.detection);
+  const lymphocytes = nuclei.filter(cls => LYMPHOCYTE.test(cls.name)), tumor = nuclei.filter(cls => TUMOR.test(cls.name));
+  if (!lymphocytes.length) return null;
+  const rings = layers.flatMap(other => [...other.classes.values()]).filter(cls => !cls.detection && cls.visible).flatMap(cls => cls.rings);
+  const key = `${nuclei.map(cls => cls.count)}|${hashText(JSON.stringify(rings))}`;
+  if (layer.stats?.key === key) return layer.stats;
+
+  // even-odd nesting as in detection: odd depths are exclusion zones, checked against each ring's box first
+  const depths = regionDepths(rings);
+  const boxes = rings.map(ring => { const xs = ring.map(point => point[0]), ys = ring.map(point => point[1]); return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)]; });
+  const inside = (x, y) => {
+    if (!rings.length) return true;
+    let deepest = -1;
+    for (const [i, [x0, y0, x1, y1]] of boxes.entries())
+      if (depths[i] > deepest && x >= x0 && x <= x1 && y >= y0 && y <= y1 && pointInPolygon([x, y], rings[i])) deepest = depths[i];
+    return deepest >= 0 && deepest % 2 === 0;
+  };
+  const countInside = classes => classes.reduce((total, cls) => { for (let i = 0; i < cls.centres.length; i += 2) total += inside(cls.centres[i], cls.centres[i + 1]); return total; }, 0);
+
+  const mpp = layer.slide?.mpp;
+  const areaMm2 = rings.length && mpp ? rings.reduce((sum, ring, i) => sum + (depths[i] % 2 ? -1 : 1) * ringArea(ring), 0) * (mpp / 1000) ** 2 : null;
+  return layer.stats = {key, lymphocyteName: lymphocytes[0].name, tumorName: tumor[0]?.name, lymphocytes: countInside(lymphocytes), tumor: countInside(tumor), areaMm2, inROI: rings.length > 0};
+}
+
+function statsNote(stats) {
+  const {lymphocyteName: l, tumorName: t, lymphocytes, tumor, areaMm2, inROI} = stats;
+  const lines = [];
+  if (t && lymphocytes + tumor) lines.push(`${l} / (${l} + ${t}): ${(100 * lymphocytes / (lymphocytes + tumor)).toFixed(1)}%`);
+  if (areaMm2) lines.push(`${l}: ${Math.round(lymphocytes / areaMm2).toLocaleString()} per mm² (${areaMm2.toFixed(1)} mm² of ROI)`);
+  lines.push(inROI ? "counted inside the ROIs and annotations shown" : "counted over the whole layer: show an ROI for per mm²");
+  const note = document.createElement("p");
+  note.className = "note stats";
+  note.textContent = lines.join("\n");
+  return note;
+}
+
 function renderLayers() {
   $("layers").replaceChildren();
   for (const layer of layers) {
@@ -1178,10 +1220,12 @@ function renderLayers() {
       label.innerHTML = `<input type="checkbox"><span class="swatch" style="background: rgb(${cls.color})"></span><span></span><span class="count">${cls.count.toLocaleString()}</span>`;
       const checkbox = label.firstChild;
       checkbox.checked = cls.visible;
-      checkbox.addEventListener("change", () => { cls.visible = checkbox.checked; draw(); });
+      checkbox.addEventListener("change", () => { cls.visible = checkbox.checked; if (!cls.detection) renderLayers(); draw(); });
       label.children[2].textContent = cls.name;
       $("layers").append(label);
     }
+    const stats = lymphocyteStats(layer);
+    if (stats) $("layers").append(statsNote(stats));
   }
   $("drop-hint").hidden = layers.length > 0;
   $("save-roi").disabled = !layers.some(layer => layer.drawn?.length);
