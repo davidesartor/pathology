@@ -1916,6 +1916,7 @@ const PARALLEL_FETCHES = 4;
 const BLOCK_READ = BLOCK + 2 * CONTEXT;  // slide px per side read for a block
 
 for (const [checkpoint, {label}] of Object.entries(MODELS.checkpoints)) $("model").append(new Option(label, checkpoint));
+if ("puma_convnextv2_base" in MODELS.checkpoints) $("model").value = "puma_convnextv2_base";
 // CellViT's HV maps are not averaged over flipped views, so it runs one
 const updateViews = () => { $("views").disabled = MODELS.checkpoints[$("model").value]?.kind === "cellvit"; };
 $("model").addEventListener("change", updateViews);
