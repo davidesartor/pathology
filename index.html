@@ -60,6 +60,7 @@
   </div>
   <div class="buttons" id="roi-buttons">
     <button id="draw-roi" title="draw regions on this slide">Draw ROI</button>
+    <button id="load-roi" title="add the regions in a GeoJSON file (e.g. saved ROIs or QuPath annotations) to this slide's ROIs">Load ROI</button>
     <button id="save-roi" title="save the regions drawn on this slide as a GeoJSON file (QuPath annotations)" disabled>Save ROIs</button>
   </div>
   <div id="detect" hidden>
@@ -81,6 +82,7 @@
   <input id="slide-folder" type="file" webkitdirectory hidden>
   <input id="files" type="file" accept=".geojson,.json" multiple hidden>
   <input id="folder" type="file" webkitdirectory hidden>
+  <input id="roi-file" type="file" accept=".geojson,.json" hidden>
   <div id="layers"></div>
   <div id="uncertainty" hidden>
     <h4><span>Class uncertainty</span></h4>
@@ -1324,32 +1326,48 @@ async function watchFolderHandle(folder) {
   await watchFolder(newLayer(folder.name), listFolder);
 }
 
-// lymphocytes / (lymphocytes + tumor cells), lymphocytes / all nuclei and lymphocytes per mm², over the nuclei inside the ROIs and annotations shown (all nuclei if none)
-const LYMPHOCYTE = /^(lymphocytes?|inflammatory)$/i, TUMOR = /^(tumou?r|neoplastic)$/i;
+// the ROIs and annotations shown on this slide: nuclei outside them are left out of the counts and drawn faint
+const shownRings = () => layers.flatMap(layer => [...layer.classes.values()]).filter(cls => !cls.detection && cls.visible).flatMap(cls => cls.rings);
+let regionCache = {rings: [], depths: []};
+function shownRegions() {
+  const rings = shownRings();
+  if (rings.length !== regionCache.rings.length || rings.some((ring, i) => ring !== regionCache.rings[i])) regionCache = {rings, depths: regionDepths(rings)};
+  return regionCache;
+}
+
+// each nucleus class's count inside the shown regions (all of it if none), cached until either changes
 const ringArea = ring => Math.abs(ring.reduce((sum, [x0, y0], i) => sum + x0 * ring[(i + 1) % ring.length][1] - ring[(i + 1) % ring.length][0] * y0, 0)) / 2;
-function lymphocyteStats(layer) {
-  const nuclei = [...layer.classes.values()].filter(cls => cls.detection);
-  const lymphocytes = nuclei.filter(cls => LYMPHOCYTE.test(cls.name)), tumor = nuclei.filter(cls => TUMOR.test(cls.name));
-  if (!lymphocytes.length) return null;
-  const rings = layers.flatMap(other => [...other.classes.values()]).filter(cls => !cls.detection && cls.visible).flatMap(cls => cls.rings);
+function insideCounts(layer) {
+  const nuclei = [...layer.classes.values()].filter(cls => cls.detection && !cls.halo);
+  const {rings, depths} = shownRegions();
   const key = `${nuclei.map(cls => cls.count)}|${hashText(JSON.stringify(rings))}`;
-  if (layer.stats?.key === key) return layer.stats;
+  if (layer.inside?.key === key) return layer.inside;
 
   // even-odd nesting as in detection: odd depths are exclusion zones, checked against each ring's box first
-  const depths = regionDepths(rings);
   const boxes = rings.map(ring => { const xs = ring.map(point => point[0]), ys = ring.map(point => point[1]); return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)]; });
   const inside = (x, y) => {
-    if (!rings.length) return true;
     let deepest = -1;
     for (const [i, [x0, y0, x1, y1]] of boxes.entries())
       if (depths[i] > deepest && x >= x0 && x <= x1 && y >= y0 && y <= y1 && pointInPolygon([x, y], rings[i])) deepest = depths[i];
     return deepest >= 0 && deepest % 2 === 0;
   };
-  const countInside = classes => classes.reduce((total, cls) => { for (let i = 0; i < cls.centres.length; i += 2) total += inside(cls.centres[i], cls.centres[i + 1]); return total; }, 0);
+  const countInside = cls => { let total = 0; for (let i = 0; i < cls.centres.length; i += 2) total += inside(cls.centres[i], cls.centres[i + 1]); return total; };
 
   const mpp = layer.slide?.mpp;
   const areaMm2 = rings.length && mpp ? rings.reduce((sum, ring, i) => sum + (depths[i] % 2 ? -1 : 1) * ringArea(ring), 0) * (mpp / 1000) ** 2 : null;
-  return layer.stats = {key, lymphocyteName: lymphocytes[0].name, tumorName: tumor[0]?.name, lymphocytes: countInside(lymphocytes), tumor: countInside(tumor), total: countInside(nuclei), areaMm2, inROI: rings.length > 0};
+  const counts = new Map(nuclei.map(cls => [cls, rings.length ? countInside(cls) : cls.count]));
+  return layer.inside = {key, counts, areaMm2, inROI: rings.length > 0};
+}
+
+// lymphocytes / (lymphocytes + tumor cells), lymphocytes / all nuclei and lymphocytes per mm², over the nuclei inside the shown regions
+const LYMPHOCYTE = /^(lymphocytes?|inflammatory)$/i, TUMOR = /^(tumou?r|neoplastic)$/i;
+function lymphocyteStats(layer) {
+  const {counts, areaMm2, inROI} = insideCounts(layer);
+  const nuclei = [...counts.keys()];
+  const lymphocytes = nuclei.filter(cls => LYMPHOCYTE.test(cls.name)), tumor = nuclei.filter(cls => TUMOR.test(cls.name));
+  if (!lymphocytes.length) return null;
+  const sum = classes => classes.reduce((total, cls) => total + counts.get(cls), 0);
+  return {lymphocyteName: lymphocytes[0].name, tumorName: tumor[0]?.name, lymphocytes: sum(lymphocytes), tumor: sum(tumor), total: sum(nuclei), areaMm2, inROI};
 }
 
 function statsNote(stats) {
@@ -1499,13 +1517,15 @@ function renderLayers() {
       if (layer.labels?.size && !layer.labelsSaved && !confirm("Discard the nuclei labelled in this layer? They are not saved.")) return;
       removeLayer(layer); renderLayers(); draw(); });
     $("layers").append(heading);
+    const {counts, inROI} = insideCounts(layer);
     for (const cls of [...layer.classes.values()].sort((a, b) => !!a.halo - !!b.halo)) {
       const label = document.createElement("label");
-      label.innerHTML = `<input type="checkbox"><span class="swatch" style="background: rgb(${cls.color})"></span><span></span><span class="count">${cls.count.toLocaleString()}</span>`;
+      label.innerHTML = `<input type="checkbox"><span class="swatch" style="background: rgb(${cls.color})"></span><span></span><span class="count">${(counts.get(cls) ?? cls.count).toLocaleString()}</span>`;
       const checkbox = label.firstChild;
       checkbox.checked = cls.visible;
       checkbox.addEventListener("change", () => { cls.visible = checkbox.checked; if (!cls.detection) renderLayers(); draw(); });
       label.children[2].textContent = cls.name;
+      if (inROI && counts.has(cls)) label.children[3].title = `inside the ROIs shown, of ${cls.count.toLocaleString()} in all`;
       $("layers").append(label);
       if (cls.halo && MANUAL_REVIEW) $("layers").append(reviewButton(layer, cls));
     }
@@ -1602,7 +1622,7 @@ function inRing([x, y], ring) {
 const ringDepths = rings => rings.map(ring => rings.filter(other => other !== ring && ring.every(point => inRing(point, other))).length);
 
 function drawnLayer() {
-  const layer = layers.find(layer => layer.drawn) ?? newLayer("drawn ROIs");
+  const layer = layers.find(layer => layer.drawn) ?? newLayer("ROIs");
   layer.drawn ??= [];
   return layer;
 }
@@ -1777,6 +1797,33 @@ $("save-roi").addEventListener("click", async () => {
   if (await saveFile(blob, `${slide.name}_roi.geojson`)) layer.saved = true;
   renderLayers();
 });
+
+// a GeoJSON file's polygons join this slide's ROIs, holes as exclusion zones, so they can be drawn on, undone and saved alike
+$("load-roi").addEventListener("click", () => $("roi-file").click());
+$("roi-file").addEventListener("change", async () => {
+  const [file] = $("roi-file").files;
+  $("roi-file").value = "";
+  if (!file || !slide) return;
+  let rings;
+  try {
+    rings = (await readFeatures(file))
+      .filter(({geometry, properties}) => ["Polygon", "MultiPolygon"].includes(geometry?.type) && properties?.objectType !== "detection")
+      .flatMap(({geometry}) => geometry.type === "Polygon" ? geometry.coordinates : geometry.coordinates.flat());
+  } catch (error) {
+    $("loading").hidden = false;
+    $("loading").textContent = `could not load ${file.name}: ${error.message}`;
+    return;
+  }
+  if (!rings.length) {
+    $("loading").hidden = false;
+    $("loading").textContent = `${file.name} has no regions (polygons that are not nuclei)`;
+    return;
+  }
+  const layer = drawnLayer(), unsaved = layer.drawn.length && !layer.saved;
+  layer.drawn.push(...rings);
+  layer.saved = !unsaved;
+  rebuildDrawn(layer);
+});
 window.addEventListener("beforeunload", event => {
   const unsaved = layer => (layer.drawn?.length || layer.featureParts?.length) && !layer.saved || layer.labels?.size && !layer.labelsSaved;
   if (detection || queue.length || Object.values(layersBySlide).flat().some(unsaved)) event.preventDefault();
@@ -1796,8 +1843,46 @@ let zoomText = "";
 
 const draw = () => panes.forEach(drawPane);
 
+// a cleared canvas the size of the pane's overlay, with its transform, for drawing before compositing
+function paneScratch(pane, name) {
+  const {ctx} = pane, scratch = pane[name] ??= document.createElement("canvas").getContext("2d");
+  if (scratch.canvas.width !== ctx.canvas.width || scratch.canvas.height !== ctx.canvas.height) [scratch.canvas.width, scratch.canvas.height] = [ctx.canvas.width, ctx.canvas.height];
+  scratch.setTransform(1, 0, 0, 1, 0, 0);
+  scratch.clearRect(0, 0, scratch.canvas.width, scratch.canvas.height);
+  scratch.setTransform(ctx.getTransform());
+  scratch.lineJoin = ctx.lineJoin;
+  scratch.imageSmoothingEnabled = ctx.imageSmoothingEnabled;
+  return scratch;
+}
+
+// the nuclei drawn faint, then again masked to the regions, painted shallowest first so exclusion zones cut holes as in the counts
+const OUTSIDE_ALPHA = 0.3;
+function composeNuclei(pane, nucleiCtx, rings, depths) {
+  const {ctx} = pane, mask = paneScratch(pane, "maskCtx");
+  for (const i of [...rings.keys()].sort((a, b) => depths[a] - depths[b])) {
+    const path = new Path2D();
+    path.moveTo(...rings[i][0]);
+    for (const point of rings[i]) path.lineTo(...point);
+    mask.globalCompositeOperation = depths[i] % 2 ? "destination-out" : "source-over";
+    mask.fill(path);
+  }
+  mask.globalCompositeOperation = "source-over";
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalAlpha = OUTSIDE_ALPHA;
+  ctx.drawImage(nucleiCtx.canvas, 0, 0);
+  nucleiCtx.setTransform(1, 0, 0, 1, 0, 0);
+  nucleiCtx.globalCompositeOperation = "destination-in";
+  nucleiCtx.drawImage(mask.canvas, 0, 0);
+  nucleiCtx.globalCompositeOperation = "source-over";
+  ctx.globalAlpha = 1;
+  ctx.drawImage(nucleiCtx.canvas, 0, 0);
+  ctx.restore();
+}
+
 // the layers are drawn on both panes, since compared slides share the slide px frame
-function drawPane({viewer, ctx}) {
+function drawPane(pane) {
+  const {viewer, ctx} = pane;
   const overlay = ctx.canvas;
   const dpr = window.devicePixelRatio || 1;
   const width = viewer.canvas.clientWidth, height = viewer.canvas.clientHeight;
@@ -1822,20 +1907,28 @@ function drawPane({viewer, ctx}) {
   const visibleClasses = layers.flatMap(layer => [...layer.classes.values(), ...previewClasses(layer)]).filter(cls => cls.visible);
   // halos go under the class outlines, but over the class dots so uncertain areas show when zoomed out
   const order = cls => !cls.detection ? 3 : cls.halo ? (nucleiTooSmall ? 2 : 0) : 1;
-  for (const cls of visibleClasses.sort((a, b) => order(a) - order(b))) {
-    if (cls.detection && nucleiTooSmall) {
+  // with regions shown, nuclei are drawn offscreen first, then faint outside the regions and solid inside
+  const {rings, depths} = shownRegions();
+  const nucleiCtx = rings.length ? paneScratch(pane, "nucleiCtx") : ctx;
+  const sorted = visibleClasses.sort((a, b) => order(a) - order(b));
+  for (const cls of sorted.filter(cls => cls.detection)) {
+    if (nucleiTooSmall) {
       const {canvas} = cls.overview;
-      ctx.drawImage(canvas, 0, 0, canvas.width * OVERVIEW, canvas.height * OVERVIEW);
+      nucleiCtx.drawImage(canvas, 0, 0, canvas.width * OVERVIEW, canvas.height * OVERVIEW);
       continue;
     }
-    if (!cls.detection) {
-      ctx.strokeStyle = "rgba(0, 0, 0, 0.7)";
-      ctx.lineWidth = 6 / scale;
-      for (const path of cls.paths.values()) ctx.stroke(path);
-    }
+    nucleiCtx.strokeStyle = `rgb(${cls.color})`;
+    nucleiCtx.lineWidth = 1.5 / scale;
+    for (const path of visiblePaths(cls, topLeft, bottomRight)) nucleiCtx.stroke(path);
+  }
+  if (rings.length) composeNuclei(pane, nucleiCtx, rings, depths);
+  for (const cls of sorted.filter(cls => !cls.detection)) {
+    ctx.strokeStyle = "rgba(0, 0, 0, 0.7)";
+    ctx.lineWidth = 6 / scale;
+    for (const path of cls.paths.values()) ctx.stroke(path);
     ctx.strokeStyle = `rgb(${cls.color})`;
-    ctx.lineWidth = (cls.detection ? 1.5 : 3) / scale;
-    for (const path of visiblePaths(cls, topLeft, bottomRight)) ctx.stroke(path);
+    ctx.lineWidth = 3 / scale;
+    for (const path of cls.paths.values()) ctx.stroke(path);
   }
   if (!nucleiTooSmall) {
     const inView = (x, y) => x > topLeft.x - 50 && x < bottomRight.x + 50 && y > topLeft.y - 50 && y < bottomRight.y + 50;
@@ -2177,7 +2270,7 @@ async function predictImage(rgb, width, height, views, onBatch) {
 
 // the regions nuclei are detected in: the ROIs and annotations shown on this slide, or else the current view
 function detectionRings() {
-  const rings = layers.flatMap(layer => [...layer.classes.values()]).filter(cls => !cls.detection && cls.visible).flatMap(cls => cls.rings);
+  const rings = shownRings();
   if (rings.length) return rings;
   const topLeft = viewer.viewport.viewerElementToImageCoordinates(new OpenSeadragon.Point(0, 0));
   const bottomRight = viewer.viewport.viewerElementToImageCoordinates(new OpenSeadragon.Point(viewer.canvas.clientWidth, viewer.canvas.clientHeight));
