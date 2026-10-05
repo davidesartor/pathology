@@ -1324,7 +1324,7 @@ async function watchFolderHandle(folder) {
   await watchFolder(newLayer(folder.name), listFolder);
 }
 
-// lymphocytes / (lymphocytes + tumor cells) and lymphocytes per mm², over the nuclei inside the ROIs and annotations shown (all nuclei if none)
+// lymphocytes / (lymphocytes + tumor cells), lymphocytes / all nuclei and lymphocytes per mm², over the nuclei inside the ROIs and annotations shown (all nuclei if none)
 const LYMPHOCYTE = /^(lymphocytes?|inflammatory)$/i, TUMOR = /^(tumou?r|neoplastic)$/i;
 const ringArea = ring => Math.abs(ring.reduce((sum, [x0, y0], i) => sum + x0 * ring[(i + 1) % ring.length][1] - ring[(i + 1) % ring.length][0] * y0, 0)) / 2;
 function lymphocyteStats(layer) {
@@ -1349,13 +1349,14 @@ function lymphocyteStats(layer) {
 
   const mpp = layer.slide?.mpp;
   const areaMm2 = rings.length && mpp ? rings.reduce((sum, ring, i) => sum + (depths[i] % 2 ? -1 : 1) * ringArea(ring), 0) * (mpp / 1000) ** 2 : null;
-  return layer.stats = {key, lymphocyteName: lymphocytes[0].name, tumorName: tumor[0]?.name, lymphocytes: countInside(lymphocytes), tumor: countInside(tumor), areaMm2, inROI: rings.length > 0};
+  return layer.stats = {key, lymphocyteName: lymphocytes[0].name, tumorName: tumor[0]?.name, lymphocytes: countInside(lymphocytes), tumor: countInside(tumor), total: countInside(nuclei), areaMm2, inROI: rings.length > 0};
 }
 
 function statsNote(stats) {
-  const {lymphocyteName: l, tumorName: t, lymphocytes, tumor, areaMm2, inROI} = stats;
+  const {lymphocyteName: l, tumorName: t, lymphocytes, tumor, total, areaMm2, inROI} = stats;
   const lines = [];
   if (t && lymphocytes + tumor) lines.push(`${l} / (${l} + ${t}): ${(100 * lymphocytes / (lymphocytes + tumor)).toFixed(1)}%`);
+  if (total) lines.push(`${l} / all nuclei: ${(100 * lymphocytes / total).toFixed(1)}%`);
   if (areaMm2) lines.push(`${l}: ${Math.round(lymphocytes / areaMm2).toLocaleString()} per mm² (${areaMm2.toFixed(1)} mm² of ROI)`);
   lines.push(inROI ? "counted inside the ROIs and annotations shown" : "counted over the whole layer: show an ROI for per mm²");
   const note = document.createElement("p");
