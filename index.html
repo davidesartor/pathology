@@ -1334,7 +1334,7 @@ async function watchFolderHandle(folder) {
   await watchFolder(newLayer(folder.name), listFolder);
 }
 
-// the ROIs and annotations shown on this slide: nuclei outside them are left out of the counts and drawn faint
+// the ROIs and annotations shown on this slide: nuclei outside them are left out of the counts and hidden
 const shownRings = () => layers.flatMap(layer => [...layer.classes.values()]).filter(cls => !cls.detection && cls.visible).flatMap(cls => cls.rings);
 let regionCache = {rings: [], depths: []};
 function shownRegions() {
@@ -1867,8 +1867,7 @@ function paneScratch(pane, name) {
   return scratch;
 }
 
-// the nuclei drawn faint, then again masked to the regions, painted shallowest first so exclusion zones cut holes as in the counts
-const OUTSIDE_ALPHA = 0.3;
+// the nuclei masked to the regions, painted shallowest first so exclusion zones cut holes as in the counts
 function composeNuclei(pane, nucleiCtx, rings, depths) {
   const {ctx} = pane, mask = paneScratch(pane, "maskCtx");
   for (const i of [...rings.keys()].sort((a, b) => depths[a] - depths[b])) {
@@ -1879,15 +1878,12 @@ function composeNuclei(pane, nucleiCtx, rings, depths) {
     mask.fill(path);
   }
   mask.globalCompositeOperation = "source-over";
-  ctx.save();
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.globalAlpha = OUTSIDE_ALPHA;
-  ctx.drawImage(nucleiCtx.canvas, 0, 0);
   nucleiCtx.setTransform(1, 0, 0, 1, 0, 0);
   nucleiCtx.globalCompositeOperation = "destination-in";
   nucleiCtx.drawImage(mask.canvas, 0, 0);
   nucleiCtx.globalCompositeOperation = "source-over";
-  ctx.globalAlpha = 1;
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.drawImage(nucleiCtx.canvas, 0, 0);
   ctx.restore();
 }
@@ -1919,7 +1915,7 @@ function drawPane(pane) {
   const visibleClasses = layers.flatMap(layer => [...layer.classes.values(), ...previewClasses(layer)]).filter(cls => cls.visible);
   // halos go under the class outlines, but over the class dots so uncertain areas show when zoomed out
   const order = cls => !cls.detection ? 3 : cls.halo ? (nucleiTooSmall ? 2 : 0) : 1;
-  // with regions shown, nuclei are drawn offscreen first, then faint outside the regions and solid inside
+  // with regions shown, nuclei are drawn offscreen first, then kept only inside the regions
   const {rings, depths} = shownRegions();
   const nucleiCtx = rings.length ? paneScratch(pane, "nucleiCtx") : ctx;
   const sorted = visibleClasses.sort((a, b) => order(a) - order(b));
