@@ -1266,7 +1266,15 @@ async function addLayer(name, files) {
   try {
     for (const [index, file] of files.entries()) {
       if (file.size < STREAM_BYTES) {
-        addFeatures(layer, await readFeatures(file));
+        const features = await readFeatures(file);
+        // a file of regions only, such as saved ROIs, joins this slide's ROIs instead
+        if (files.length === 1 && target === layers && isRegionsOnly(features)) {
+          target.splice(target.indexOf(layer), 1);
+          addROIs(regionRings(features));
+          $("loading").hidden = true;
+          return;
+        }
+        addFeatures(layer, features);
         continue;
       }
       for await (const [features, fraction] of streamFeatures(file)) {
@@ -1799,6 +1807,15 @@ $("save-roi").addEventListener("click", async () => {
 });
 
 // a GeoJSON file's polygons join this slide's ROIs, holes as exclusion zones, so they can be drawn on, undone and saved alike
+const isRegion = ({geometry, properties}) => ["Polygon", "MultiPolygon"].includes(geometry?.type) && properties?.objectType !== "detection";
+const isRegionsOnly = features => features.length > 0 && features.every(isRegion);
+const regionRings = features => features.filter(isRegion).flatMap(({geometry}) => geometry.type === "Polygon" ? geometry.coordinates : geometry.coordinates.flat());
+function addROIs(rings) {
+  const layer = drawnLayer(), unsaved = layer.drawn.length && !layer.saved;
+  layer.drawn.push(...rings);
+  layer.saved = !unsaved;
+  rebuildDrawn(layer);
+}
 $("load-roi").addEventListener("click", () => $("roi-file").click());
 $("roi-file").addEventListener("change", async () => {
   const [file] = $("roi-file").files;
@@ -1806,9 +1823,7 @@ $("roi-file").addEventListener("change", async () => {
   if (!file || !slide) return;
   let rings;
   try {
-    rings = (await readFeatures(file))
-      .filter(({geometry, properties}) => ["Polygon", "MultiPolygon"].includes(geometry?.type) && properties?.objectType !== "detection")
-      .flatMap(({geometry}) => geometry.type === "Polygon" ? geometry.coordinates : geometry.coordinates.flat());
+    rings = regionRings(await readFeatures(file));
   } catch (error) {
     $("loading").hidden = false;
     $("loading").textContent = `could not load ${file.name}: ${error.message}`;
@@ -1819,10 +1834,7 @@ $("roi-file").addEventListener("change", async () => {
     $("loading").textContent = `${file.name} has no regions (polygons that are not nuclei)`;
     return;
   }
-  const layer = drawnLayer(), unsaved = layer.drawn.length && !layer.saved;
-  layer.drawn.push(...rings);
-  layer.saved = !unsaved;
-  rebuildDrawn(layer);
+  addROIs(rings);
 });
 window.addEventListener("beforeunload", event => {
   const unsaved = layer => (layer.drawn?.length || layer.featureParts?.length) && !layer.saved || layer.labels?.size && !layer.labelsSaved;
