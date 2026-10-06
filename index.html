@@ -1092,7 +1092,7 @@ async function openMRXS(folder) {
       const [count, next] = [int32(page), int32(page + 4)];
       for (let i = 0, entry = page + 8; i < count; i++, entry += 16) {
         const [imageIndex, offset, length, fileNumber] = [int32(entry), int32(entry + 4), int32(entry + 8), int32(entry + 12)];
-        const image = {key: `${fileNumber}:${offset}`, blob: dataFiles[fileNumber].slice(offset, offset + length, type)};
+        const image = {key: `${fileNumber}:${offset}`, fileNumber, offset, length, type};  // sliced only when decoded: a Blob per image costs browser memory
         const [x, y] = [imageIndex % imagesX, Math.floor(imageIndex / imagesX)];
         for (let yi = 0; yi < tilesPerImage && y + yi * divisions < imagesY; yi++) {
           for (let xi = 0; xi < tilesPerImage && x + xi * divisions < imagesX; xi++) {
@@ -1145,7 +1145,7 @@ async function openMRXS(folder) {
   const decode = image => {
     let bitmap = decoded.get(image.key);
     decoded.delete(image.key);
-    bitmap ??= createImageBitmap(image.blob, {colorSpaceConversion: "none"});
+    bitmap ??= createImageBitmap(dataFiles[image.fileNumber].slice(image.offset, image.offset + image.length, image.type), {colorSpaceConversion: "none"});
     decoded.set(image.key, bitmap);
     for (const key of [...decoded.keys()].slice(0, Math.max(0, decoded.size - MRXS_IMAGE_CACHE))) decoded.delete(key);
     return bitmap;
