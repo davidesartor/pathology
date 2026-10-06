@@ -49,10 +49,10 @@
 <div id="viewer2" hidden></div>
 <div id="panel" class="box">
   <select id="compare" aria-label="side by side with" title="a second slide on the right, panned and zoomed together; layers are drawn on both"></select>
-  <p id="no-slides" class="note" hidden>Open a slide (.tiff, .svs) to start.</p>
+  <p id="no-slides" class="note" hidden>Open a slide (.tiff, .svs, or an .mrxs folder) to start.</p>
   <div class="buttons">
-    <button id="open-slide" title="TIFF or SVS slides on this computer; they are read in place, never uploaded">Open slide</button>
-    <button id="open-slide-folder" title="every TIFF or SVS slide in a folder, listed at once; each is read when picked">Open folder</button>
+    <button id="open-slide" title="TIFF or SVS slides on this computer; they are read in place, never uploaded. For MRXS, use Open folder">Open slide</button>
+    <button id="open-slide-folder" title="every TIFF, SVS or MRXS slide in a folder, listed at once; each is read when picked. An MRXS slide is the folder beside its .mrxs file">Open folder</button>
   </div>
   <div class="buttons" id="layer-buttons">
     <button id="add-files" title="one layer per file">Add GeoJSON</button>
@@ -78,7 +78,7 @@
     <p id="model-status" class="note" hidden></p>
   </div>
   <p id="draw-help" class="note" hidden>Click to place corners, or hold and drag to trace. Close with Enter, a double-click or a click on the first corner. A shape drawn inside another is an exclusion zone. Backspace undoes, Esc cancels. Two fingers pan, pinch zooms.</p>
-  <input id="slide-file" type="file" accept=".tif,.tiff,.btf,.tf8,.svs" multiple hidden>
+  <input id="slide-file" type="file" accept=".tif,.tiff,.btf,.tf8,.svs,.mrxs" multiple hidden>
   <input id="slide-folder" type="file" webkitdirectory hidden>
   <input id="files" type="file" accept=".geojson,.json" multiple hidden>
   <input id="folder" type="file" webkitdirectory hidden>
@@ -1006,14 +1006,217 @@ async function openTIFF(file) {
   return {width, height, mpp: aperioMpp ?? mpp, inferenceMpp: aperioMpp ?? inferenceMpp, image: full, source};
 }
 
+// a MIRAX (3DHistech .mrxs) slide is a folder: Slidedat.ini, Index.dat and Data*.dat files holding one JPEG, PNG or BMP per camera image
+// and zoom level, placed by the scanner's stitching positions. The layout follows OpenSlide's mirax reader, so pixels match predict_roi.py
+function parseINI(text) {
+  const groups = {};
+  let group = null;
+  for (const line of text.replace(/^﻿/, "").split(/\r?\n/)) {
+    const header = line.match(/^\s*\[(.+)\]\s*$/);
+    if (header) groups[header[1]] = group = {};
+    else if (group && line.includes("=")) group[line.slice(0, line.indexOf("=")).trim()] = line.slice(line.indexOf("=") + 1).trim();
+  }
+  return groups;
+}
+const MRXS_IMAGE_CACHE = 64;  // decoded camera images kept, ~3 MB each
+async function openMRXS(folder) {
+  const file = name => folder.get(name.toLowerCase()) ?? (() => { throw new Error(`its folder has no ${name}`); })();
+  const ini = parseINI(await file("Slidedat.ini").text());
+  const {GENERAL: general, HIERARCHICAL: hier, DATAFILE: datafile} = ini;
+  const [imagesX, imagesY] = [Number(general.IMAGENUMBER_X), Number(general.IMAGENUMBER_Y)];
+  const divisions = Number(general.CameraImageDivisionsPerSide ?? 1);
+  if (hier.HIER_0_NAME !== "Slide zoom level") throw new Error("Slidedat.ini has no slide zoom levels as HIER_0");
+  const sections = Array.from({length: Number(hier.HIER_0_COUNT)}, (_, i) => ini[hier[`HIER_0_VAL_${i}_SECTION`]]);
+  const dataFiles = Array.from({length: Number(datafile.FILE_COUNT)}, (_, i) => file(datafile[`FILE_${i}`]));
+  const index = new DataView(await file(hier.INDEXFILE).arrayBuffer());
+  const int32 = offset => index.getInt32(offset, true);
+  if (new TextDecoder().decode(index.buffer.slice(0, 5)) !== "01.02") throw new Error("Index.dat is not version 01.02");
+  const hierRoot = 5 + general.SLIDE_ID.length, nonhierRoot = hierRoot + 4;
+
+  // non-hierarchical records are numbered by name, then value, in Slidedat.ini order; their data page holds one (offset, size, file)
+  function nonhierRecord(name) {
+    for (let i = 0, record = 0; i < Number(hier.NONHIER_COUNT); record += Number(hier[`NONHIER_${i}_COUNT`]), i++)
+      if (hier[`NONHIER_${i}_NAME`] === name) {
+        const page = int32(int32(int32(nonhierRoot) + 4 * record) + 4);
+        return file(datafile[`FILE_${int32(page + 24)}`]).slice(int32(page + 16), int32(page + 16) + int32(page + 20));
+      }
+    return null;
+  }
+
+  // level-0 position of each camera photo: raw (VIMSLIDE_POSITION_BUFFER), zlib-compressed (StitchingIntensityLayer), or a nominal grid
+  const concat0 = 2 ** Number(sections[0].IMAGE_CONCAT_FACTOR);
+  const [imageWidth0, imageHeight0] = [Number(sections[0].DIGITIZER_WIDTH), Number(sections[0].DIGITIZER_HEIGHT)];
+  const [overlapX0, overlapY0] = [Number(sections[0].OVERLAP_X), Number(sections[0].OVERLAP_Y)];
+  const positionsX = Math.floor(imagesX / divisions), positionCount = positionsX * Math.floor(imagesY / divisions);
+  const rawPositions = nonhierRecord("VIMSLIDE_POSITION_BUFFER");
+  const compressedPositions = rawPositions ? null : nonhierRecord("StitchingIntensityLayer");
+  const positions = new Int32Array(positionCount * 2);
+  if (rawPositions || compressedPositions) {
+    const buffer = rawPositions ?? new Response(compressedPositions.stream().pipeThrough(new DecompressionStream("deflate")));
+    const records = new DataView(await buffer.arrayBuffer());
+    if (records.byteLength < positionCount * 9) throw new Error("its position map is shorter than its camera grid");
+    for (let i = 0; i < positionCount; i++)
+      [positions[2 * i], positions[2 * i + 1]] = [records.getInt32(9 * i + 1, true) * concat0, records.getInt32(9 * i + 5, true) * concat0];
+  } else {
+    for (let i = 0; i < positionCount; i++)
+      [positions[2 * i], positions[2 * i + 1]] = [(i % positionsX) * (imageWidth0 * divisions - overlapX0), Math.floor(i / positionsX) * (imageHeight0 * divisions - overlapY0)];
+  }
+
+  // slide size: camera images edge to edge, less the overlap between photos, truncated at each step as OpenSlide sums into an integer
+  let [baseWidth, baseHeight] = [0, 0];
+  for (let i = 0; i < imagesX; i++) baseWidth = Math.trunc(baseWidth + imageWidth0 - (i % divisions === divisions - 1 && i !== imagesX - 1 ? overlapX0 : 0));
+  for (let i = 0; i < imagesY; i++) baseHeight = Math.trunc(baseHeight + imageHeight0 - (i % divisions === divisions - 1 && i !== imagesY - 1 ? overlapY0 : 0));
+  const [width, height] = [Math.floor(baseWidth / concat0), Math.floor(baseHeight / concat0)];
+
+  // each level's images are cut into tiles, one per photo they span, each placed at its photo's position (OpenSlide's tilemap)
+  const subtiles = !!(rawPositions || compressedPositions) || overlapX0 !== 0 || overlapY0 !== 0;
+  const activePositions = new Set();
+  const levels = [];
+  let concatExponent = 0;
+  const levelTable = int32(hierRoot);
+  for (const [level, section] of sections.entries()) {
+    concatExponent += Number(section.IMAGE_CONCAT_FACTOR);
+    const imageConcat = 2 ** concatExponent;
+    const positionsPerImage = Math.max(1, Math.floor(imageConcat / divisions));
+    const tileCountDivisor = subtiles ? Math.min(imageConcat, divisions) : imageConcat;
+    const tilesPerImage = subtiles ? positionsPerImage : 1;
+    const positionsPerTile = subtiles ? 1 : positionsPerImage;
+    const [imageWidth, imageHeight] = [Number(section.DIGITIZER_WIDTH), Number(section.DIGITIZER_HEIGHT)];
+    const [tileWidth, tileHeight] = [imageWidth / tilesPerImage, imageHeight / tilesPerImage];
+    const downsample = imageConcat / concat0;
+    const type = {JPEG: "image/jpeg", PNG: "image/png", BMP24: "image/bmp"}[section.IMAGE_FORMAT];
+    if (!type) throw new Error(`its ${section.IMAGE_FORMAT} images are not supported`);
+    const tiles = [];
+    let page = int32(int32(levelTable + 4 * level) + 4);
+    do {
+      const [count, next] = [int32(page), int32(page + 4)];
+      for (let i = 0, entry = page + 8; i < count; i++, entry += 16) {
+        const [imageIndex, offset, length, fileNumber] = [int32(entry), int32(entry + 4), int32(entry + 8), int32(entry + 12)];
+        const image = {key: `${fileNumber}:${offset}`, blob: dataFiles[fileNumber].slice(offset, offset + length, type)};
+        const [x, y] = [imageIndex % imagesX, Math.floor(imageIndex / imagesX)];
+        for (let yi = 0; yi < tilesPerImage && y + yi * divisions < imagesY; yi++) {
+          for (let xi = 0; xi < tilesPerImage && x + xi * divisions < imagesX; xi++) {
+            const [xx, yy] = [x + xi * divisions, y + yi * divisions];
+            const [xp, yp] = [Math.floor(xx / divisions), Math.floor(yy / divisions)];
+            const position = yp * positionsX + xp;
+            // a tile is kept only if a level-0 image covers one of its photos; unscanned photos may sit at (0, 0)
+            if (level === 0) {
+              if (positions[2 * position] === 0 && positions[2 * position + 1] === 0 && (xp || yp)) continue;
+              activePositions.add(position);
+            } else {
+              let active = false;
+              for (let ypp = yp; ypp < yp + positionsPerTile && !active; ypp++)
+                for (let xpp = xp; xpp < xp + positionsPerTile && !active; xpp++) active = activePositions.has(ypp * positionsX + xpp);
+              if (!active) continue;
+            }
+            const left = (positions[2 * position] + imageWidth0 * (xx - xp * divisions)) / concat0;
+            const top = (positions[2 * position + 1] + imageHeight0 * (yy - yp * divisions)) / concat0;
+            const order = [Math.floor(y / tileCountDivisor) + yi, Math.floor(x / tileCountDivisor) + xi];
+            tiles.push({image, sourceX: tileWidth * xi, sourceY: tileHeight * yi, left, top, order});
+          }
+        }
+      }
+      page = next;
+    } while (page !== 0);
+    // later tiles cover earlier ones where photos overlap, in row-major tile order as OpenSlide paints them
+    tiles.sort((a, b) => a.order[0] - b.order[0] || a.order[1] - b.order[1]);
+    // spatial index: buckets of one tile's level-0 size, each tile in every bucket it touches
+    const [cellWidth, cellHeight] = [tileWidth * downsample, tileHeight * downsample];
+    const cells = new Map();
+    for (const [rank, tile] of tiles.entries()) {
+      tile.rank = rank;
+      for (let cy = Math.floor(tile.top / cellHeight); cy <= Math.floor((tile.top + cellHeight) / cellHeight); cy++)
+        for (let cx = Math.floor(tile.left / cellWidth); cx <= Math.floor((tile.left + cellWidth) / cellWidth); cx++)
+          (cells.get(`${cx},${cy}`) ?? cells.set(`${cx},${cy}`, []).get(`${cx},${cy}`)).push(tile);
+    }
+    const tilesIn = (x0, y0, x1, y1) => {
+      const found = new Set();
+      for (let cy = Math.floor(y0 / cellHeight) - 1; cy <= Math.floor(y1 / cellHeight); cy++)
+        for (let cx = Math.floor(x0 / cellWidth) - 1; cx <= Math.floor(x1 / cellWidth); cx++)
+          for (const tile of cells.get(`${cx},${cy}`) ?? [])
+            if (tile.left < x1 && tile.left + cellWidth > x0 && tile.top < y1 && tile.top + cellHeight > y0) found.add(tile);
+      return [...found].sort((a, b) => a.rank - b.rank);
+    };
+    levels.push({downsample, tileWidth, tileHeight, tilesIn});
+  }
+
+  // decoded camera images, least recently used first out
+  const decoded = new Map();
+  const decode = image => {
+    let bitmap = decoded.get(image.key);
+    decoded.delete(image.key);
+    bitmap ??= createImageBitmap(image.blob, {colorSpaceConversion: "none"});
+    decoded.set(image.key, bitmap);
+    for (const [key, old] of [...decoded].slice(0, Math.max(0, decoded.size - MRXS_IMAGE_CACHE))) {
+      decoded.delete(key);
+      old.then(bitmap => bitmap.close(), () => {});
+    }
+    return bitmap;
+  };
+  // level-0 region [x0, x1) x [y0, y1) drawn into a context of the given size from the finest level no finer than needed
+  async function drawRegion(context, x0, y0, x1, y1, outWidth, outHeight) {
+    const scale = (x1 - x0) / outWidth;
+    const {downsample, tileWidth, tileHeight, tilesIn} = levels.findLast(level => level.downsample <= scale * 1.01) ?? levels[0];
+    const tiles = tilesIn(x0, y0, x1, y1);
+    const bitmaps = await Promise.all(tiles.map(tile => decode(tile.image)));
+    for (const [i, tile] of tiles.entries())
+      context.drawImage(bitmaps[i], tile.sourceX, tile.sourceY, tileWidth, tileHeight,
+        (tile.left - x0) / scale, (tile.top - y0) / scale, tileWidth * downsample / scale, tileHeight * downsample / scale);
+  }
+
+  const bgr = Number(sections[0].IMAGE_FILL_COLOR_BGR);
+  const background = `rgb(${bgr & 255}, ${(bgr >> 8) & 255}, ${(bgr >> 16) & 255})`;
+  const maxLevel = Math.ceil(Math.log2(Math.max(width, height)));
+  const source = new OpenSeadragon.TileSource({width, height, tileSize: TIFF_TILE, tileOverlap: 0, minLevel: 0, maxLevel});
+  const id = ++tiffCount;
+  source.getTileUrl = (level, x, y) => `mrxs${id}/${level}/${x}/${y}`;  // only a cache key
+  source.downloadTileAbort = () => {};
+  source.downloadTileStart = async job => {
+    const [level, x, y] = job.src.split("/").slice(1).map(Number);
+    const downsample = 2 ** (maxLevel - level);
+    const [x0, y0] = [x * TIFF_TILE * downsample, y * TIFF_TILE * downsample];
+    const [x1, y1] = [Math.min(width, x0 + TIFF_TILE * downsample), Math.min(height, y0 + TIFF_TILE * downsample)];
+    const [tileWidth, tileHeight] = [Math.ceil((x1 - x0) / downsample), Math.ceil((y1 - y0) / downsample)];
+    try {
+      const canvas = new OffscreenCanvas(tileWidth, tileHeight), context = canvas.getContext("2d");
+      context.fillStyle = background;
+      context.fillRect(0, 0, tileWidth, tileHeight);
+      context.imageSmoothingQuality = "high";
+      await drawRegion(context, x0, y0, x0 + tileWidth * downsample, y0 + tileHeight * downsample, tileWidth, tileHeight);
+      job.finish(canvas.transferToImageBitmap());
+    } catch (error) {
+      job.finish(null, null, error.message);
+    }
+  };
+
+  // level-0 pixels for nucleus detection, black where no photo was taken, as OpenSlide's RGBA reads flatten to RGB
+  const image = {
+    async readRasters({window: [left, top, right, bottom]}) {
+      const canvas = new OffscreenCanvas(right - left, bottom - top), context = canvas.getContext("2d", {willReadFrequently: true});
+      await drawRegion(context, left, top, right, bottom, right - left, bottom - top);
+      const rgba = context.getImageData(0, 0, right - left, bottom - top).data;
+      const rgb = new Uint8Array(rgba.length / 4 * 3);
+      for (let i = 0, j = 0; i < rgba.length; i += 4, j += 3) [rgb[j], rgb[j + 1], rgb[j + 2]] = [rgba[i], rgba[i + 1], rgba[i + 2]];
+      return rgb;
+    },
+  };
+  const mpp = Number(sections[0].MICROMETER_PER_PIXEL_X) || null;
+  return {width, height, mpp, inferenceMpp: mpp, image, source};
+}
+
 // slides are listed at once, and each is read when first shown
 const slideName = file => file.name.replace(/\.[^.]+$/, "").replace(/\.ome$/i, "");
-const openEntry = entry => entry.opening ??= openTIFF(entry.file).then(opened => Object.assign(entry, opened));
-function addSlideFiles(files, from) {
-  const added = files.filter(file => isTIFF(file.name)).map(file => ({name: slideName(file), file}));
+const openEntry = entry => entry.opening ??= (entry.mrxs ? openMRXS(entry.mrxs) : openTIFF(entry.file)).then(opened => Object.assign(entry, opened));
+// an MRXS slide is the folder holding Slidedat.ini, named after it; the .mrxs file beside that folder is not needed
+const hasSlidedat = files => files.some(file => file.name.toLowerCase() === "slidedat.ini");
+const mrxsEntry = (name, files) => ({name, mrxs: new Map(files.map(file => [file.name.toLowerCase(), file]))});
+const handleFiles = async folder => { const files = []; for await (const entry of folder.values()) if (entry.kind === "file") files.push(await entry.getFile()); return files; };
+function addSlideFiles(files, from, mrxsEntries = []) {
+  const added = [...files.filter(file => isTIFF(file.name)).map(file => ({name: slideName(file), file})), ...mrxsEntries];
   if (!added.length) {
-    $("loading").hidden = !from;
-    $("loading").textContent = `no TIFF or SVS slides in ${from}`;
+    const mrxs = files.find(file => /\.mrxs$/i.test(file.name));
+    $("loading").hidden = !from && !mrxs;
+    $("loading").textContent = mrxs ? `an MRXS slide is a folder: use Open folder on the folder holding ${mrxs.name} and its ${slideName(mrxs)} folder` : `no TIFF, SVS or MRXS slides in ${from}`;
     return;
   }
   for (const entry of added) {
@@ -1040,9 +1243,13 @@ $("open-slide-folder").addEventListener("click", async () => {
   if (!window.showDirectoryPicker) return $("slide-folder").click();
   try {
     const folder = await showDirectoryPicker();
-    const files = [];
-    for await (const entry of folder.values()) if (entry.kind === "file" && isTIFF(entry.name)) files.push(await entry.getFile());
-    addSlideFiles(files, folder.name);
+    const [files, mrxs] = [[], []];
+    for await (const entry of folder.values()) {
+      if (entry.kind === "file" && /\.(tiff?|btf|tf8|svs|mrxs)$/i.test(entry.name) || entry.name.toLowerCase() === "slidedat.ini") files.push(await entry.getFile());
+      else if (entry.kind === "directory" && await entry.getFileHandle("Slidedat.ini").then(() => true, () => false)) mrxs.push(mrxsEntry(entry.name, await handleFiles(entry)));
+    }
+    if (hasSlidedat(files)) mrxs.push(mrxsEntry(folder.name, await handleFiles(folder)));  // the MRXS folder itself was picked
+    addSlideFiles(files, folder.name, mrxs);
   } catch (error) {
     if (error.name !== "AbortError") $("slide-folder").click();
   }
@@ -1050,7 +1257,9 @@ $("open-slide-folder").addEventListener("click", async () => {
 $("slide-folder").addEventListener("change", () => {
   const files = [...$("slide-folder").files];
   $("slide-folder").value = "";
-  if (files.length) addSlideFiles(files, files[0].webkitRelativePath.split("/")[0]);
+  const folderOf = file => file.webkitRelativePath.split("/").slice(0, -1).join("/");
+  const mrxs = Object.entries(Object.groupBy(files, folderOf)).filter(([, files]) => hasSlidedat(files)).map(([folder, files]) => mrxsEntry(folder.split("/").pop(), files));
+  if (files.length) addSlideFiles(files, files[0].webkitRelativePath.split("/")[0], mrxs);
 });
 
 // the slides named in the URL hash
@@ -1576,11 +1785,21 @@ $("folder").addEventListener("change", async () => {
 
 // drag and drop, with the same one-layer-per-file / per-folder rule
 const entryFile = entry => new Promise((resolve, reject) => entry.file(resolve, reject));
-async function folderFiles(folder) {
-  const reader = folder.createReader(), files = [];
-  for (let batch; (batch = await new Promise((resolve, reject) => reader.readEntries(resolve, reject))).length;)
-    for (const entry of batch) if (entry.isFile) files.push(await entryFile(entry));
-  return files;
+async function folderEntries(folder) {
+  const reader = folder.createReader(), entries = [];
+  for (let batch; (batch = await new Promise((resolve, reject) => reader.readEntries(resolve, reject))).length;) entries.push(...batch);
+  return entries;
+}
+const folderFiles = async folder => Promise.all((await folderEntries(folder)).filter(entry => entry.isFile).map(entryFile));
+async function mrxsFolders(folder, files) {
+  if (hasSlidedat(files)) return [mrxsEntry(folder.name, files)];
+  const found = [];
+  for (const entry of await folderEntries(folder)) {
+    if (!entry.isDirectory) continue;
+    const inner = await folderFiles(entry);
+    if (hasSlidedat(inner)) found.push(mrxsEntry(entry.name, inner));
+  }
+  return found;
 }
 window.addEventListener("dragenter", event => { if (event.dataTransfer.types.includes("Files")) $("drop").hidden = false; });
 window.addEventListener("dragover", event => event.preventDefault());
@@ -1595,7 +1814,9 @@ $("drop").addEventListener("drop", async event => {
   for (const [handlePromise, entry, file] of dropped.filter(([, , file]) => !(file && isTIFF(file.name)))) {
     const handle = await handlePromise;
     const files = entry?.isDirectory ? await folderFiles(entry) : [];
-    if (files.some(file => isTIFF(file.name))) addSlideFiles(files);
+    const mrxs = entry?.isDirectory ? await mrxsFolders(entry, files) : [];
+    if (files.some(file => isTIFF(file.name)) || mrxs.length) addSlideFiles(files, entry.name, mrxs);
+    else if (file && /\.mrxs$/i.test(file.name)) { if (!dropped.some(([, entry]) => entry?.isDirectory)) addSlideFiles([file]); }
     else if (handle?.kind === "directory") watchFolderHandle(handle);
     else if (entry?.isDirectory) await addLayer(entry.name, files);
     else if (file) await addLayer(stem(file.name), [file]);
