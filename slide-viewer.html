@@ -29,7 +29,9 @@
   #panel #view input { flex: 1; min-width: 0; }
   #panel #view button { flex: none; }
   #panel .area { display: flex; align-items: center; gap: 2px; padding: 1px 0; font-variant-numeric: tabular-nums; }
-  #panel .area > span { margin-right: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+  #panel .area input[type=text] { flex: 1; min-width: 0; font: inherit; color: inherit; background: none; border: 1px solid transparent; border-radius: 4px; padding: 1px 4px; }
+  #panel .area input[type=text]:hover, #panel .area input[type=text]:focus { border-color: #555; outline: none; }
+  #panel .area input[type=color] { width: 20px; height: 20px; padding: 0; border: none; background: none; cursor: pointer; }
   #panel .area button { padding: 0 5px; background: none; border: none; color: #999; }
   #panel .area button:hover, #panel h4 button:hover { color: #fff; }
   #info { bottom: 8px; left: 8px; max-width: min(360px, calc(100% - 32px)); font-variant-numeric: tabular-nums; }
@@ -65,7 +67,7 @@
     <select id="compare" aria-label="side by side with" title="a second slide on the right, panned and zoomed together"></select>
   </div>
   <div class="buttons" id="area-buttons">
-    <button id="highlight" title="outline areas of interest on this slide; each can then be saved as a full-resolution image">Highlight area</button>
+    <button id="highlight" title="outline areas of interest on this slide, each in its own colour and with a name; captures show them">Highlight area</button>
     <button id="capture" title="drag a rectangle over the slide to save it as a full-resolution PNG, turned and mirrored as on screen">Capture</button>
   </div>
   <p id="draw-help" class="note" hidden>Drag to outline an area, or click to place corners. Close with Enter, a double-click or a click on the first corner. Backspace undoes, Esc cancels. Two fingers pan, pinch zooms.</p>
@@ -724,7 +726,7 @@ $("drop").addEventListener("drop", async event => {
 });
 
 // highlighting areas on the main pane: a click places a corner, a drag traces
-const AREA_COLOR = [255, 220, 0];
+const AREA_COLOR = "#ffdc00";
 const CLOSE_DISTANCE = 10;  // screen px from the first corner within which a click closes the area
 const TRACE_STEP = 4;  // screen px between traced points
 let drawing = false;
@@ -742,7 +744,8 @@ function finishDraft() {
   const corners = draft.filter((point, i) => i === 0 || screenDistance(point, draft[i - 1]) >= 2);  // a double-click's second corner
   [draft, draftStrokes] = [[], []];
   if (corners.length >= 3) {
-    slide.areas.push({number: (slide.areas.at(-1)?.number ?? 0) + 1, ring: corners.map(([x, y]) => [Math.round(x), Math.round(y)])});
+    const number = (slide.areas.at(-1)?.number ?? 0) + 1;
+    slide.areas.push({number, name: `Highlight ${number}`, color: AREA_COLOR, ring: corners.map(([x, y]) => [Math.round(x), Math.round(y)])});
     renderAreas();
   }
   draw();
@@ -835,7 +838,7 @@ window.addEventListener("keydown", event => {
     setCapturing(false);
     return event.preventDefault();
   }
-  if (!drawing) return;
+  if (!drawing || event.target.matches?.("input[type=text]")) return;
   if (event.key === "Enter") finishDraft();
   else if (event.key === "Escape") draft.length ? ([draft, draftStrokes] = [[], []], draw()) : setDrawing(false);
   else if (event.key === "Backspace" || event.key === "Delete" || (event.key === "z" && (event.metaKey || event.ctrlKey))) undo();
@@ -890,6 +893,7 @@ function imageDownsample({width, height}) {
 
 async function renderArea(area, turn, onProgress) {
   const box = turnedBox(area.ring, turn), downsample = imageDownsample(box);
+  const view = {rotation: viewer.viewport.getRotation(), flip: viewer.viewport.getFlip()};
   const canvas = new OffscreenCanvas(Math.max(1, Math.ceil(box.width / downsample)), Math.max(1, Math.ceil(box.height / downsample)));
   const context = canvas.getContext("2d");
   const toImagePx = new DOMMatrix().scaleSelf(1 / downsample).translateSelf(-box.left, -box.top).multiplySelf(turn);
@@ -898,6 +902,7 @@ async function renderArea(area, turn, onProgress) {
   outline.moveTo(...area.ring[0]);
   for (const point of area.ring) outline.lineTo(...point);
   outline.closePath();
+  context.save();
   context.clip(outline);
   context.imageSmoothingQuality = "high";
   if (slide.background) {
@@ -919,6 +924,13 @@ async function renderArea(area, turn, onProgress) {
     await slide.drawRegion(context, left, top, right, bottom, (right - left) / downsample, (bottom - top) / downsample);
     onProgress((i + 1) / pieces.length);
   }
+
+  // the highlights as on screen, but never thinner than at 1 screen px per output px
+  const size = Math.max(1, 1 / (screenScale() * downsample));
+  context.setTransform(1, 0, 0, 1, 0, 0);
+  drawHighlights(context, toImagePx, size);
+  context.restore();
+  drawLegend(context, canvas.width, canvas.height, downsample, view);
   return {canvas, downsample};
 }
 
@@ -946,7 +958,7 @@ async function saveImage(suggestedName, render) {
 async function saveArea(area) {
   const turn = viewTurn(), box = turnedBox(area.ring, turn), downsample = imageDownsample(box);
   const [width, height] = [Math.ceil(box.width / downsample), Math.ceil(box.height / downsample)];
-  const label = area.number ? `area ${area.number}` : "the capture";
+  const label = "the capture";
   if (downsample > 1 && !confirm(`${label[0].toUpperCase() + label.slice(1)} is ${Math.ceil(box.width).toLocaleString()} × ${Math.ceil(box.height).toLocaleString()} px at full resolution, more than this browser can hold in one image. Save it at 1/${downsample} resolution (${width.toLocaleString()} × ${height.toLocaleString()} px)? Or cancel and pick a smaller area.`)) return;
   const [x, y] = [Math.round(Math.max(0, Math.min(...area.ring.map(([x]) => x)))), Math.round(Math.max(0, Math.min(...area.ring.map(([, y]) => y))))];
   const name = `${slide.name}_x${x}_y${y}${downsample > 1 ? `_1to${downsample}` : ""}.png`;
@@ -976,17 +988,16 @@ function goToArea(area) {
 
 function renderAreas() {
   const areas = slide?.areas ?? [];
-  const turn = viewTurn();
   $("areas").replaceChildren(...areas.map(area => {
     const row = document.createElement("div");
     row.className = "area";
-    row.innerHTML = `<span title="show this area"></span><button title="save this area as a full-resolution PNG, turned and mirrored as on screen">Capture</button><button title="remove this area">×</button>`;
-    const [label, save, remove] = row.children;
-    const box = turnedBox(area.ring, turn);
-    label.textContent = `Area ${area.number}`;
-    row.insertBefore(Object.assign(document.createElement("span"), {className: "count", textContent: `${Math.ceil(box.width).toLocaleString()} × ${Math.ceil(box.height).toLocaleString()} px`}), save);
-    label.addEventListener("click", () => goToArea(area));
-    save.addEventListener("click", () => saveArea(area));
+    row.innerHTML = `<input type="color" title="colour of this highlight"><input type="text" title="name of this highlight, shown by it" spellcheck="false"><button title="show this highlight">◎</button><button title="remove this highlight">×</button>`;
+    const [color, name, show, remove] = row.children;
+    [color.value, name.value] = [area.color, area.name];
+    color.addEventListener("input", () => { area.color = color.value; draw(); });
+    name.addEventListener("input", () => { area.name = name.value; draw(); });
+    name.addEventListener("keydown", event => { if (event.key === "Enter" || event.key === "Escape") name.blur(); });
+    show.addEventListener("click", () => goToArea(area));
     remove.addEventListener("click", () => { slide.areas.splice(slide.areas.indexOf(area), 1); renderAreas(); draw(); });
     return row;
   }));
@@ -998,13 +1009,74 @@ let zoomText = "";
 const draw = () => panes.forEach(drawPane);
 
 // the areas are drawn on both panes, since compared slides share the slide px frame
-function strokeOutline(ctx, path, scale) {
+function strokeOutline(ctx, path, scale, color = AREA_COLOR) {
   ctx.strokeStyle = "rgba(0, 0, 0, 0.7)";
   ctx.lineWidth = 6 / scale;
   ctx.stroke(path);
-  ctx.strokeStyle = `rgb(${AREA_COLOR})`;
+  ctx.strokeStyle = color;
   ctx.lineWidth = 3 / scale;
   ctx.stroke(path);
+}
+
+// each highlight outlined in its colour, its name upright above its topmost point; `size` output px per screen px
+function drawHighlights(ctx, toOutput, size) {
+  ctx.lineJoin = "round";
+  for (const area of slide.areas) {
+    const ring = area.ring.map(([x, y]) => toOutput.transformPoint({x, y}));
+    const path = new Path2D();
+    path.moveTo(ring[0].x, ring[0].y);
+    for (const {x, y} of ring) path.lineTo(x, y);
+    path.closePath();
+    strokeOutline(ctx, path, 1 / size, area.color);
+    if (!area.name) continue;
+    const top = ring.reduce((a, b) => b.y < a.y ? b : a);
+    ctx.font = `bold ${14 * size}px system-ui, sans-serif`;
+    ctx.textAlign = "center";
+    ctx.lineWidth = 4 * size;
+    ctx.strokeStyle = "rgba(0, 0, 0, 0.8)";
+    ctx.strokeText(area.name, top.x, top.y - 8 * size);
+    ctx.fillStyle = area.color;
+    ctx.fillText(area.name, top.x, top.y - 8 * size);
+  }
+}
+
+// a round length (1, 2 or 5 × 10ⁿ µm) no longer than `longest` µm
+const roundMicrons = longest => [5, 2, 1].map(factor => factor * 10 ** Math.floor(Math.log10(longest))).find(length => length <= longest);
+const micronsText = microns => microns >= 1000 ? `${+(microns / 1000).toFixed(3)} mm` : `${+microns.toFixed(3)} µm`;
+
+// bottom-left of a capture: a scale bar, the pixel size and where it comes from
+function drawLegend(ctx, width, height, downsample, {rotation, flip}) {
+  const size = Math.max(1, Math.max(width, height) / 1000);
+  const micronsPerPx = slide.mpp && slide.mpp * downsample;
+  const objective = slide.metadata.find(([key]) => key === "Objective")?.[1];
+  const angle = Math.round(((rotation % 360) + 540) % 360 - 180), lines = [
+    slide.name,
+    [micronsPerPx ? `${+micronsPerPx.toPrecision(3)} µm/px` : "pixel size unknown", downsample > 1 && `1/${downsample} resolution`, objective && `scanned at ${objective}`].filter(Boolean).join(" · "),
+    [angle && `rotated ${angle}°`, flip && "mirrored"].filter(Boolean).join(", "),
+  ].filter(Boolean);
+  const microns = micronsPerPx && roundMicrons(0.25 * width * micronsPerPx);
+  const [pad, lineHeight] = [8 * size, 16 * size];
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.font = `${12 * size}px system-ui, sans-serif`;
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  const barWidth = microns ? microns / micronsPerPx : 0;
+  const boxWidth = 2 * pad + Math.max(barWidth, ...lines.map(line => ctx.measureText(line).width));
+  const boxHeight = 2 * pad + lines.length * lineHeight + (microns ? lineHeight + 8 * size : 0);
+  const [left, top] = [0, height - boxHeight];
+  ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
+  ctx.fillRect(left, top, boxWidth, boxHeight);
+  ctx.fillStyle = "#fff";
+  let y = top + pad + lineHeight / 2;
+  if (microns) {
+    ctx.fillText(micronsText(microns), left + pad, y);
+    ctx.fillRect(left + pad, y + lineHeight / 2 + 2 * size, barWidth, 4 * size);
+    y += lineHeight + 8 * size;
+  }
+  for (const line of lines) {
+    ctx.fillText(line, left + pad, y);
+    y += lineHeight;
+  }
 }
 // the slide's metadata, and a scale bar of a round length (1, 2 or 5 × 10ⁿ µm) at most 120 screen px long
 let infoSlide = null;
@@ -1021,10 +1093,9 @@ function renderInfo(scale) {
   $("scale").hidden = !slide.mpp;
   if (!slide.mpp) return;
   const micronsPerScreenPx = slide.mpp / scale;
-  const longest = 120 * micronsPerScreenPx;
-  const microns = [5, 2, 1].map(factor => factor * 10 ** Math.floor(Math.log10(longest))).find(length => length <= longest);
+  const microns = roundMicrons(120 * micronsPerScreenPx);
   $("scale-bar").style.width = `${microns / micronsPerScreenPx}px`;
-  $("scale-label").textContent = microns >= 1000 ? `${+(microns / 1000).toFixed(3)} mm` : `${+microns.toFixed(3)} µm`;
+  $("scale-label").textContent = micronsText(microns);
 }
 // the info box opens as it was last left, or open on wide screens
 try { $("metadata").open = (localStorage.getItem("slide-info-open") ?? String(innerWidth >= 700)) === "true"; } catch { $("metadata").open = innerWidth >= 700; }
@@ -1044,25 +1115,8 @@ function drawPane(pane) {
   const origin = toScreen(viewer, 0, 0), alongX = toScreen(viewer, 1, 0), alongY = toScreen(viewer, 0, 1);
   const scale = Math.hypot(alongX.x - origin.x, alongX.y - origin.y);
   const toDevice = new DOMMatrix([(alongX.x - origin.x) * dpr, (alongX.y - origin.y) * dpr, (alongY.x - origin.x) * dpr, (alongY.y - origin.y) * dpr, origin.x * dpr, origin.y * dpr]);
-  ctx.lineJoin = "round";
-  for (const area of slide.areas) {
-    ctx.setTransform(toDevice);
-    const path = new Path2D();
-    path.moveTo(...area.ring[0]);
-    for (const point of area.ring) path.lineTo(...point);
-    path.closePath();
-    strokeOutline(ctx, path, scale);
-    // its number by its topmost point on screen
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    const top = area.ring.map(([x, y]) => toScreen(viewer, x, y)).reduce((a, b) => b.y < a.y ? b : a);
-    ctx.font = "bold 14px system-ui, sans-serif";
-    ctx.textAlign = "center";
-    ctx.lineWidth = 4;
-    ctx.strokeStyle = "rgba(0, 0, 0, 0.8)";
-    ctx.strokeText(area.number, top.x, top.y - 8);
-    ctx.fillStyle = `rgb(${AREA_COLOR})`;
-    ctx.fillText(area.number, top.x, top.y - 8);
-  }
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  drawHighlights(ctx, toDevice, dpr);
   if (viewer !== panes[0].viewer) return;
 
   // the area being drawn, with a line to the pointer and its first corner filled when a click would close it
@@ -1076,7 +1130,7 @@ function drawPane(pane) {
     const closes = draft.length >= 3 && pointer && screenDistance(pointer, draft[0]) < CLOSE_DISTANCE;
     ctx.beginPath();
     ctx.arc(...draft[0], (closes ? 7 : 5) / scale, 0, 2 * Math.PI);
-    ctx.fillStyle = closes ? `rgb(${AREA_COLOR})` : "black";
+    ctx.fillStyle = closes ? AREA_COLOR : "black";
     ctx.fill();
     ctx.stroke();
   }
