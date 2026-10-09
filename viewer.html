@@ -1,0 +1,1065 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- slides never leave this device: the page may only download its pinned libraries -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'wasm-unsafe-eval' https://cdn.jsdelivr.net/npm/openseadragon@5.0.1/ https://cdn.jsdelivr.net/npm/geotiff@3.0.5/ https://cdn.jsdelivr.net/npm/@cornerstonejs/codec-openjpeg@1.3.6/; worker-src blob:; connect-src blob: https://cdn.jsdelivr.net/npm/@cornerstonejs/codec-openjpeg@1.3.6/; img-src blob: data: https://cdn.jsdelivr.net/npm/openseadragon@5.0.1/; style-src 'unsafe-inline'; form-action 'none'; base-uri 'none'">
+<title>Slide viewer</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #1a1a1a; color: #eee; font: 13px system-ui, sans-serif; }
+  #viewer, #viewer2 { position: absolute; inset: 0; }
+  body.split #viewer { right: 50%; }
+  body.split #viewer2 { left: 50%; border-left: 2px solid #555; }
+  .box { position: absolute; background: rgba(20, 20, 20, 0.85); border-radius: 6px; padding: 8px 10px; }
+  #panel { top: 8px; right: 8px; width: 240px; max-height: calc(100% - 240px); overflow: auto; }
+  #panel select, #panel button { font: inherit; color: inherit; background: #333; border: 1px solid #555; border-radius: 4px; padding: 3px 6px; cursor: pointer; }
+  #panel select { width: 100%; }
+  #panel .buttons { display: flex; gap: 6px; margin-top: 6px; }
+  #panel .buttons button { flex: 1; }
+  #panel button:disabled { opacity: 0.5; cursor: default; }
+  #panel button.active { background: #066; border-color: #0ff; }
+  #panel h4 { display: flex; align-items: center; margin: 8px 0 2px; font-size: 12px; font-weight: 600; color: #aaa; }
+  #panel h4 span { margin-right: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #panel h4 button { padding: 0 5px; background: none; border: none; color: #999; }
+  #panel label { display: flex; align-items: center; gap: 6px; padding: 1px 0; cursor: pointer; }
+  #panel .count { margin-left: auto; padding-left: 12px; color: #999; font-variant-numeric: tabular-nums; }
+  #panel .note { margin: 6px 0 0; color: #aaa; font-style: italic; }
+  #panel #view label { flex: 1; min-width: 0; }
+  #panel #view input { flex: 1; min-width: 0; }
+  #panel #view button { flex: none; }
+  #panel .area { display: flex; align-items: center; gap: 2px; padding: 1px 0; font-variant-numeric: tabular-nums; }
+  #panel .area > span { margin-right: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+  #panel .area button { padding: 0 5px; background: none; border: none; color: #999; }
+  #panel .area button:hover, #panel h4 button:hover { color: #fff; }
+  #info { bottom: 8px; left: 8px; max-width: min(360px, calc(100% - 32px)); font-variant-numeric: tabular-nums; }
+  #info summary { cursor: pointer; color: #aaa; }
+  #info table { margin: 4px 0 6px; border-spacing: 0; }
+  #info td { padding: 0; vertical-align: top; overflow-wrap: anywhere; }
+  #info td:first-child { padding-right: 10px; color: #999; white-space: nowrap; }
+  #scale { display: flex; align-items: center; gap: 8px; margin: 4px 0 3px; }
+  #scale-bar { height: 5px; border: 2px solid #fff; border-top: none; }
+  #tabs { top: 8px; left: 8px; max-width: calc(100% - 300px); display: flex; gap: 4px; overflow-x: auto; padding: 4px; }
+  #tabs .tab { flex: none; display: flex; align-items: center; gap: 6px; padding: 3px 2px 3px 8px; background: #333; border: 1px solid #555; border-radius: 4px; color: #ccc; white-space: nowrap; cursor: pointer; }
+  #tabs .tab.active { background: #066; border-color: #0ff; color: #fff; }
+  #tabs button { font: inherit; padding: 0 4px; background: none; border: none; color: #999; cursor: pointer; }
+  #drop { position: fixed; inset: 0; z-index: 10; display: grid; place-items: center; background: rgba(0, 0, 0, 0.6); border: 3px dashed #888; font-size: 20px; }
+  [hidden] { display: none !important; }
+  #drop * { pointer-events: none; }
+</style>
+</head>
+<body>
+<div id="viewer"></div>
+<div id="viewer2" hidden></div>
+<div id="panel" class="box">
+  <p id="no-slides" class="note" hidden>Open a slide (.tiff, .svs, or an .mrxs folder) to start.</p>
+  <div class="buttons">
+    <button id="open-slide" title="TIFF or SVS slides on this computer; they are read in place, never uploaded. For MRXS, use Open folder">Open slide</button>
+    <button id="open-slide-folder" title="every TIFF, SVS or MRXS slide in a folder, listed at once; each is read when picked. An MRXS slide is the folder beside its .mrxs file">Open folder</button>
+  </div>
+  <div class="buttons" id="view">
+    <label title="turns the view about its centre. Double-click to straighten">rotate <input id="rotation" type="range" min="-180" max="180" step="1" value="0"><span id="rotation-value" class="count">0°</span></label>
+    <button id="flip" title="mirrors the view left to right">Flip</button>
+  </div>
+  <div class="buttons" id="compare-row">
+    <select id="compare" aria-label="side by side with" title="a second slide on the right, panned and zoomed together"></select>
+  </div>
+  <div class="buttons" id="area-buttons">
+    <button id="highlight" title="outline areas of interest on this slide; each can then be saved as a full-resolution image">Highlight area</button>
+  </div>
+  <p id="draw-help" class="note" hidden>Drag to outline an area, or click to place corners. Close with Enter, a double-click or a click on the first corner. Backspace undoes, Esc cancels. Two fingers pan, pinch zooms.</p>
+  <div id="areas"></div>
+  <input id="slide-file" type="file" accept=".tif,.tiff,.btf,.tf8,.svs,.mrxs" multiple hidden>
+  <input id="slide-folder" type="file" webkitdirectory hidden>
+  <p id="loading" class="note" hidden></p>
+  <p id="drop-hint" class="note">or drop slides or folders anywhere</p>
+</div>
+<div id="info" class="box" hidden>
+  <details id="metadata"><summary>Slide info</summary><table></table></details>
+  <div id="scale"><div id="scale-bar"></div><span id="scale-label"></span></div>
+  <div id="status"></div>
+</div>
+<div id="tabs" class="box" role="tablist" hidden></div>
+<div id="drop" hidden><span>Drop slides or folders</span></div>
+<script src="https://cdn.jsdelivr.net/npm/openseadragon@5.0.1/build/openseadragon/openseadragon.min.js" integrity="sha384-Vh4b5HGyvDGMp6lVeYZe1zCqqyhS8oLTUC4SKIWmOuYH7nEuWiGIpSACopwLu9UD" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/geotiff@3.0.5/dist-browser/geotiff.js" integrity="sha384-QchpYxK+DqZYCChtK4SebrECTZEIQ0ahLhme9vwraN6KNxOGwtS66BG72wo1HQDN" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@cornerstonejs/codec-openjpeg@1.3.6/dist/openjpegwasm_decode.js" integrity="sha384-2d0uFnefmrsUyM92krljsCy3fnu5wefwCwX0au75MDClK9PQa3FuUWhmvDNPrg68" crossorigin="anonymous"></script>
+<script>
+const $ = id => document.getElementById(id);
+const isTIFF = name => /\.(tiff?|btf|tf8|svs)$/i.test(name);
+
+const viewerOptions = {
+  prefixUrl: "https://cdn.jsdelivr.net/npm/openseadragon@5.0.1/build/openseadragon/images/",
+  drawer: "canvas",
+  maxZoomPixelRatio: 4,
+};
+const viewer = OpenSeadragon({...viewerOptions, element: $("viewer"), showNavigator: true, navigatorPosition: "BOTTOM_RIGHT"});
+const viewer2 = OpenSeadragon({...viewerOptions, element: $("viewer2")});
+
+// each pane's overlay canvas sits inside OSD's canvas container so the navigator stays on top
+const panes = [viewer, viewer2].map(paneViewer => {
+  const overlay = document.createElement("canvas");
+  overlay.style.cssText = "position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none";
+  paneViewer.canvas.appendChild(overlay);
+  return {viewer: paneViewer, ctx: overlay.getContext("2d")};
+});
+
+// the view may be turned by any angle and mirrored; OSD's coordinate conversions leave the mirroring out, so these add it
+const unmirrored = (paneViewer, position) => paneViewer.viewport.getFlip() ? new OpenSeadragon.Point(paneViewer.viewport.getContainerSize().x - position.x, position.y) : position;
+const toImage = (paneViewer, position) => paneViewer.viewport.viewerElementToImageCoordinates(unmirrored(paneViewer, position));
+const toScreen = (paneViewer, x, y) => unmirrored(paneViewer, paneViewer.viewport.imageToViewerElementCoordinates(new OpenSeadragon.Point(x, y)));
+
+// side by side, the pane under the pointer leads and the other follows it frame by frame
+let leader = viewer;
+const follow = (source, target) => {
+  target.viewport.setFlip(source.viewport.getFlip());
+  if (target.viewport.getRotation(true) !== source.viewport.getRotation(true)) target.viewport.setRotation(source.viewport.getRotation(true), true);
+  target.viewport.zoomTo(source.viewport.getZoom(true), null, true);
+  target.viewport.panTo(source.viewport.getCenter(true), true);
+};
+for (const pane of panes) {
+  const other = pane.viewer === viewer ? viewer2 : viewer;
+  pane.viewer.container.addEventListener("pointerenter", () => { leader = pane.viewer; });
+  pane.viewer.addHandler("update-viewport", () => {
+    if (compareSlide && pane.viewer === leader) follow(leader, other);
+    drawPane(pane);
+  });
+}
+viewer2.addHandler("open", () => follow(viewer, viewer2));
+
+// rotation and mirroring are view only; OSD's r, R and f keys change them too
+function setView(rotation, flip) {
+  viewer.viewport.setRotation(rotation, true);
+  viewer.viewport.setFlip(flip);
+  if (compareSlide) follow(viewer, viewer2);
+}
+const straight = degrees => ((degrees + 180) % 360 + 360) % 360 - 180;
+const showView = () => {
+  const degrees = Math.round(straight(viewer.viewport.getRotation()));
+  $("rotation").value = degrees;
+  $("rotation-value").textContent = `${degrees}°`;
+  $("flip").classList.toggle("active", viewer.viewport.getFlip());
+  renderAreas();
+};
+viewer.addHandler("rotate", showView);
+viewer.addHandler("flip", showView);
+$("rotation").addEventListener("input", () => setView(Number($("rotation").value), viewer.viewport.getFlip()));
+$("rotation").addEventListener("dblclick", () => setView(0, viewer.viewport.getFlip()));
+$("flip").addEventListener("click", () => setView(viewer.viewport.getRotation(), !viewer.viewport.getFlip()));
+viewer.addHandler("open", () => {
+  if (slide?.bounds) viewer.viewport.fitBounds(slide.bounds, true);
+  if (compareSlide) follow(viewer, viewer2);
+});
+
+// one tab per slide opened so far, each keeping its highlighted areas and view; the slides are kept in the URL hash as "slide" or "slide|compared"
+const slides = [];
+let slide = null;
+let compareSlide = null;
+function listSlides() {
+  slides.sort((a, b) => a.name.localeCompare(b.name, undefined, {numeric: true}));
+  renderTabs();
+  $("compare").replaceChildren(new Option("side by side with…", ""), ...slides.map(({name}) => new Option(name, name)));
+  $("compare").value = compareSlide?.name ?? "";
+  $("tabs").hidden = $("view").hidden = $("area-buttons").hidden = !slides.length;
+  $("compare-row").hidden = slides.length < 2;
+  $("no-slides").hidden = $("drop-hint").hidden = slides.length > 0;
+}
+listSlides();
+const setHash = (name, compareName) => { location.hash = encodeURIComponent([name, compareName].filter(Boolean).join("|")); };
+function pickSlide(name) {
+  // the compared slide follows to the same slide number, e.g. 1_norm | 1_unnorm -> 2_norm | 2_unnorm
+  const number = name.match(/^\d+/)?.[0];
+  const sameNumber = number && compareSlide?.name.replace(/^\d+/, number);
+  setHash(name, slides.some(({name}) => name === sameNumber) ? sameNumber : compareSlide?.name);
+}
+function renderTabs() {
+  $("tabs").replaceChildren(...slides.map(entry => {
+    const tab = document.createElement("div");
+    tab.className = entry === slide ? "tab active" : "tab";
+    tab.setAttribute("role", "tab");
+    tab.innerHTML = `<span></span><button title="close this slide">×</button>`;
+    const [name, close] = tab.children;
+    name.textContent = tab.title = entry.name;
+    tab.addEventListener("click", () => pickSlide(entry.name));
+    close.addEventListener("click", event => { event.stopPropagation(); closeSlide(entry); });
+    return tab;
+  }));
+  $("tabs").querySelector(".active")?.scrollIntoView({block: "nearest", inline: "nearest"});
+}
+function closeSlide(entry) {
+  const index = slides.indexOf(entry);
+  slides.splice(index, 1);
+  if (compareSlide === entry) compareSlide = null;
+  if (slide === entry) {
+    slide = null;
+    $("info").hidden = true;
+    viewer.close();
+    renderAreas();
+    draw();
+    const next = slides[Math.min(index, slides.length - 1)];
+    if (next) setHash(next.name, compareSlide?.name);
+    else { history.replaceState(null, "", location.pathname); document.title = "Slide viewer"; document.body.classList.remove("split"); $("viewer2").hidden = true; }
+  } else if (slide) setHash(slide.name, compareSlide?.name);
+  listSlides();
+}
+$("compare").addEventListener("change", () => setHash(slide.name, $("compare").value));
+window.addEventListener("hashchange", openSlide);
+
+// a TIFF on this computer, read in place: each screen tile is decoded from the finest stored level no finer than it needs.
+// Reduced levels come from OME-TIFF SubIFDs or from further images of the same shape; without them, zoomed-out views are slow
+// geotiff.js's LZW decoder has a 4093-entry table, but TIFF LZW codes reach 4094 and it then loops forever
+class LZWDecoder extends GeoTIFF.BaseDecoder {
+  decodeBlock(buffer) {
+    const input = new Uint8Array(buffer);
+    const [prefix, suffix, length] = [new Uint16Array(4096), new Uint8Array(4096), new Uint16Array(4096)];
+    for (let code = 0; code < 256; code++) [suffix[code], length[code]] = [code, 1];
+    let [out, size] = [new Uint8Array(input.length * 4), 0];
+    let [bit, width, next, previous] = [0, 9, 258, -1];
+    while (bit + width <= input.length * 8) {
+      const byte = bit >> 3;
+      const code = ((input[byte] << 16 | input[byte + 1] << 8 | input[byte + 2]) >>> (24 - width - (bit & 7))) & ((1 << width) - 1);
+      bit += width;
+      if (code === 257) break;
+      if (code === 256) { [width, next, previous] = [9, 258, -1]; continue; }
+      const known = code < next;
+      const entry = known ? code : previous;  // unknown code = previous string + its own first byte
+      if (entry < 0) break;
+      const entryLength = length[entry] + (known ? 0 : 1);
+      if (size + entryLength > out.length) { const grown = new Uint8Array(out.length * 2); grown.set(out); out = grown; }
+      for (let i = length[entry] - 1, c = entry; i >= 0; i--, c = prefix[c]) out[size + i] = suffix[c];
+      if (!known) out[size + entryLength - 1] = out[size];
+      if (previous >= 0 && next < 4096) [prefix[next], suffix[next], length[next], next] = [previous, out[size], length[previous] + 1, next + 1];
+      if (next + 1 >= 1 << width && width < 12) width++;
+      size += entryLength;
+      previous = code;
+    }
+    return out.slice(0, size).buffer;
+  }
+}
+GeoTIFF.addDecoder(5, async () => LZWDecoder);
+
+// Aperio SVS tiles are JPEG 2000 codestreams (33003 YCbCr, 33005 RGB); OpenJPEG returns them as interleaved RGB, upsampling chroma itself
+let jpeg2000 = null;
+class JPEG2000Decoder extends GeoTIFF.BaseDecoder {
+  async decodeBlock(buffer) {
+    jpeg2000 ??= fetch("https://cdn.jsdelivr.net/npm/@cornerstonejs/codec-openjpeg@1.3.6/dist/openjpegwasm_decode.wasm", {integrity: "sha384-vnERhjKq0JjqCuNAa/LFmVQcF6vG6mYNF49WJQCnRMAV/t9yMtqThwjxHTJ6uE4D"})
+      .then(response => response.arrayBuffer())
+      .then(wasmBinary => OpenJPEGWASM({wasmBinary, print: () => {}, printErr: () => {}}))
+      .then(codec => new codec.J2KDecoder());
+    const decoder = await jpeg2000;
+    const codestream = new Uint8Array(buffer);
+    decoder.getEncodedBuffer(codestream.length).set(codestream);
+    decoder.decode();
+    return decoder.getDecodedBuffer().slice().buffer;
+  }
+}
+for (const compression of [33003, 33005]) GeoTIFF.addDecoder(compression, async () => JPEG2000Decoder);
+
+const TIFF_TILE = 512;
+const OVERVIEW_BYTES = 64e6;  // stored levels up to this size (RGB) are decoded whole, once, for zoomed-out tiles
+let tiffCount = 0;
+
+const tileRGBA = (rgb, width, height) => {
+  const rgba = new Uint8ClampedArray(width * height * 4).fill(255);
+  for (let i = 0, j = 0; i < rgb.length; i += 3, j += 4) [rgba[j], rgba[j + 1], rgba[j + 2]] = [rgb[i], rgb[i + 1], rgb[i + 2]];
+  return new ImageData(rgba, width, height);
+};
+
+// zoomed-out tiles each need many stored tiles of a small level; re-reading and decoding them per screen tile stalls WebKit.
+// Such a level is decoded once into a bitmap instead, kept for the last two slides shown (side-by-side compare)
+const overviewBitmaps = [];
+function overviewBitmap(image) {
+  let entry = overviewBitmaps.find(entry => entry.image === image);
+  if (!entry) {
+    const [width, height] = [image.getWidth(), image.getHeight()];
+    entry = {image, bitmap: image.readRasters({samples: [0, 1, 2], interleave: true}).then(rgb => createImageBitmap(tileRGBA(rgb, width, height)))};
+    entry.bitmap.catch(() => overviewBitmaps.splice(overviewBitmaps.indexOf(entry), 1));
+    overviewBitmaps.unshift(entry);
+    overviewBitmaps.splice(2).forEach(({bitmap}) => bitmap.then(bitmap => bitmap.close(), () => {}));
+  }
+  return entry.bitmap;
+}
+// what a slide's files say about its scan, as label/value rows for the info box; unknown fields are left out
+const TIFF_COMPRESSIONS = {1: "uncompressed", 5: "LZW", 7: "JPEG", 8: "Deflate", 32946: "Deflate", 33003: "JPEG 2000", 33005: "JPEG 2000", 34712: "JPEG 2000", 50000: "Zstandard", 50001: "WebP"};
+function metadataRows({format, width, height, mpp, objective, levels, scanner, scanned, original, software, bytes}) {
+  const fileSize = bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : `${Math.max(1, Math.round(bytes / 1e6))} MB`;
+  return [
+    ["Format", format],
+    ["Pixels", `${width.toLocaleString()} × ${height.toLocaleString()}`],
+    ["Scanned area", mpp && `${(width * mpp / 1000).toFixed(1)} × ${(height * mpp / 1000).toFixed(1)} mm`],
+    ["Pixel size", mpp && `${+mpp.toFixed(4)} µm`],
+    ["Objective", objective && `${+objective}×`],
+    ["Levels", String(levels)],
+    ["Scanner", scanner],
+    ["Scanned", scanned],
+    ["Original name", original],
+    ["Software", software],
+    ["File size", fileSize],
+  ].filter(([, value]) => value);
+}
+
+async function openTIFF(file) {
+  const tiff = await GeoTIFF.fromBlob(file);
+  tiff.parser.eager = true;  // geotiff.js's lazy reads garble BigTIFF offset arrays
+  const full = await tiff.getImage(0);
+  const [width, height] = [full.getWidth(), full.getHeight()];
+  const images = [full];
+  for (const offset of full.fileDirectory.getValue("SubIFDs") ?? [])
+    images.push(new GeoTIFF.GeoTIFFImage(await tiff.parser.parseFileDirectoryAt(Number(offset)), tiff.littleEndian, tiff.cache, tiff.source));
+  for (let i = 1; i < await tiff.getImageCount(); i++) images.push(await tiff.getImage(i));
+  // geotiff.js expects per-sample SampleFormat/BitsPerSample arrays, but writers may store one value for all
+  for (const {fileDirectory} of images) {
+    const getValue = fileDirectory.getValue.bind(fileDirectory);
+    const samples = getValue("SamplesPerPixel") ?? 1;
+    fileDirectory.getValue = tag => {
+      const value = getValue(tag);
+      return ["SampleFormat", "BitsPerSample"].includes(tag) && value?.length < samples ? Array(samples).fill(value[0]) : value;
+    };
+  }
+  const levels = images
+    .filter(image => Math.abs(image.getHeight() - height * image.getWidth() / width) < 2)  // not label or macro images, whose shape is only close
+    .map(image => ({image, downsample: width / image.getWidth()}))
+    .sort((a, b) => a.downsample - b.downsample);
+
+  const maxLevel = Math.ceil(Math.log2(Math.max(width, height)));
+  const source = new OpenSeadragon.TileSource({width, height, tileSize: TIFF_TILE, tileOverlap: 0, minLevel: 0, maxLevel});
+  const id = ++tiffCount;
+  source.getTileUrl = (level, x, y) => `tiff${id}/${level}/${x}/${y}`;  // only a cache key
+  source.downloadTileAbort = () => {};
+  source.downloadTileStart = async job => {
+    const [level, x, y] = job.src.split("/").slice(1).map(Number);
+    const downsample = 2 ** (maxLevel - level);
+    const {image, downsample: stored} = levels.findLast(({downsample: stored}) => stored <= downsample * 1.01) ?? levels[0];
+    const [x0, y0] = [x * TIFF_TILE * downsample, y * TIFF_TILE * downsample];
+    const [x1, y1] = [Math.min(width, x0 + TIFF_TILE * downsample), Math.min(height, y0 + TIFF_TILE * downsample)];
+    const [left, top] = [Math.floor(x0 / stored), Math.floor(y0 / stored)];
+    const right = Math.max(left + 1, Math.min(image.getWidth(), Math.round(x1 / stored)));
+    const bottom = Math.max(top + 1, Math.min(image.getHeight(), Math.round(y1 / stored)));
+    const [tileWidth, tileHeight] = [Math.ceil((x1 - x0) / downsample), Math.ceil((y1 - y0) / downsample)];
+    try {
+      if (image.getWidth() * image.getHeight() * 3 <= OVERVIEW_BYTES) {
+        const canvas = new OffscreenCanvas(tileWidth, tileHeight), context = canvas.getContext("2d");
+        context.imageSmoothingQuality = "high";
+        context.drawImage(await overviewBitmap(image), x0 / stored, y0 / stored, (x1 - x0) / stored, (y1 - y0) / stored, 0, 0, tileWidth, tileHeight);
+        return job.finish(canvas.transferToImageBitmap());
+      }
+      const rgb = await image.readRasters({
+        window: [left, top, right, bottom], width: tileWidth, height: tileHeight,
+        samples: [0, 1, 2], interleave: true, resampleMethod: "bilinear",
+      });
+      job.finish(await createImageBitmap(tileRGBA(rgb, tileWidth, tileHeight)));
+    } catch (error) {
+      job.finish(null, null, error.message);
+    }
+  };
+
+  // level-0 region [x0, x1) x [y0, y1) drawn into a context of the given size from the finest stored level no finer than needed
+  async function drawRegion(context, x0, y0, x1, y1, outWidth, outHeight) {
+    const scale = (x1 - x0) / outWidth;
+    const {image, downsample: stored} = levels.findLast(({downsample: stored}) => stored <= scale * 1.01) ?? levels[0];
+    const [left, top] = [Math.floor(x0 / stored), Math.floor(y0 / stored)];
+    const right = Math.max(left + 1, Math.min(image.getWidth(), Math.ceil(x1 / stored)));
+    const bottom = Math.max(top + 1, Math.min(image.getHeight(), Math.ceil(y1 / stored)));
+    const rgb = await image.readRasters({window: [left, top, right, bottom], samples: [0, 1, 2], interleave: true});
+    const bitmap = await createImageBitmap(tileRGBA(rgb, right - left, bottom - top));
+    context.drawImage(bitmap, (left * stored - x0) / scale, (top * stored - y0) / scale, (right - left) * stored / scale, (bottom - top) * stored / scale);
+    bitmap.close();
+  }
+
+  // microns per px from the TIFF resolution tags (unit 2 = inch, 3 = cm), for the magnification readout
+  const directory = full.fileDirectory;
+  const [numerator, denominator] = directory.hasTag("XResolution") ? directory.getValue("XResolution") : [0, 1];
+  const unit = directory.hasTag("ResolutionUnit") ? directory.getValue("ResolutionUnit") : 2;
+  const pxPerUnit = numerator / denominator;
+  const mpp = pxPerUnit > 1 && unit > 1 ? (unit === 3 ? 1e4 : 25400) / pxPerUnit : null;
+  // Aperio SVS keeps it in the description instead
+  const aperioMpp = Number(String(directory.getValue("ImageDescription") ?? "").match(/^Aperio[^]*\|\s*MPP\s*=\s*([\d.]+)/)?.[1]) || null;
+  // what the scanner wrote about the scan: Aperio fields in the description, OME-XML, or plain TIFF tags
+  const description = String(directory.getValue("ImageDescription") ?? "");
+  const aperio = description.startsWith("Aperio") ? Object.fromEntries(description.split("|").slice(1).map(field => [field.slice(0, field.indexOf("=")).trim(), field.slice(field.indexOf("=") + 1).trim()])) : null;
+  const ome = description.includes("<OME") ? new DOMParser().parseFromString(description, "application/xml") : null;
+  const omeValue = (element, attribute) => ome?.querySelector(element)?.getAttribute(attribute);
+  const tag = name => directory.hasTag(name) ? String(directory.getValue(name)).replace(/\0/g, "").trim() || null : null;
+  const metadata = metadataRows({
+    format: [aperio ? "Aperio SVS" : ome ? "OME-TIFF" : "TIFF", TIFF_COMPRESSIONS[directory.getValue("Compression")]].filter(Boolean).join(", "),
+    width, height, mpp: aperioMpp ?? mpp, levels: levels.length, bytes: file.size,
+    objective: aperio?.AppMag ?? omeValue("Objective", "NominalMagnification"),
+    scanner: aperio?.["ScanScope ID"] ? `Aperio ScanScope ${aperio["ScanScope ID"]}` : [tag("Make"), tag("Model")].filter(Boolean).join(" ") || [omeValue("Microscope", "Manufacturer"), omeValue("Microscope", "Model")].filter(Boolean).join(" "),
+    scanned: aperio?.Date ? `${aperio.Date} ${aperio.Time ?? ""}`.trim() : ome?.querySelector("AcquisitionDate")?.textContent ?? tag("DateTime"),
+    original: aperio?.Filename ?? omeValue("UUID", "FileName"),
+    software: tag("Software") ?? (aperio && description.split(/\r?\n/)[0].trim()),
+  });
+  return {width, height, mpp: aperioMpp ?? mpp, metadata, drawRegion, source};
+}
+
+// a MIRAX (3DHistech .mrxs) slide is a folder: Slidedat.ini, Index.dat and Data*.dat files holding one JPEG, PNG or BMP per camera image
+// and zoom level, placed by the scanner's stitching positions. The layout follows OpenSlide's mirax reader
+function parseINI(text) {
+  const groups = {};
+  let group = null;
+  for (const line of text.replace(/^﻿/, "").split(/\r?\n/)) {
+    const header = line.match(/^\s*\[(.+)\]\s*$/);
+    if (header) groups[header[1]] = group = {};
+    else if (group && line.includes("=")) group[line.slice(0, line.indexOf("=")).trim()] = line.slice(line.indexOf("=") + 1).trim();
+  }
+  return groups;
+}
+const MRXS_IMAGE_CACHE = 64;  // decoded camera images kept, ~3 MB each
+async function openMRXS(folder) {
+  const file = name => folder.get(name.toLowerCase()) ?? (() => { throw new Error(`its folder has no ${name}`); })();
+  const ini = parseINI(await file("Slidedat.ini").text());
+  const {GENERAL: general, HIERARCHICAL: hier, DATAFILE: datafile} = ini;
+  const [imagesX, imagesY] = [Number(general.IMAGENUMBER_X), Number(general.IMAGENUMBER_Y)];
+  const divisions = Number(general.CameraImageDivisionsPerSide ?? 1);
+  if (hier.HIER_0_NAME !== "Slide zoom level") throw new Error("Slidedat.ini has no slide zoom levels as HIER_0");
+  const sections = Array.from({length: Number(hier.HIER_0_COUNT)}, (_, i) => ini[hier[`HIER_0_VAL_${i}_SECTION`]]);
+  const dataFiles = Array.from({length: Number(datafile.FILE_COUNT)}, (_, i) => file(datafile[`FILE_${i}`]));
+  const index = new DataView(await file(hier.INDEXFILE).arrayBuffer());
+  const int32 = offset => index.getInt32(offset, true);
+  if (new TextDecoder().decode(index.buffer.slice(0, 5)) !== "01.02") throw new Error("Index.dat is not version 01.02");
+  const hierRoot = 5 + general.SLIDE_ID.length, nonhierRoot = hierRoot + 4;
+
+  // non-hierarchical records are numbered by name, then value, in Slidedat.ini order; their data page holds one (offset, size, file)
+  function nonhierRecord(name) {
+    for (let i = 0, record = 0; i < Number(hier.NONHIER_COUNT); record += Number(hier[`NONHIER_${i}_COUNT`]), i++)
+      if (hier[`NONHIER_${i}_NAME`] === name) {
+        const page = int32(int32(int32(nonhierRoot) + 4 * record) + 4);
+        return file(datafile[`FILE_${int32(page + 24)}`]).slice(int32(page + 16), int32(page + 16) + int32(page + 20));
+      }
+    return null;
+  }
+
+  // level-0 position of each camera photo: raw (VIMSLIDE_POSITION_BUFFER), zlib-compressed (StitchingIntensityLayer), or a nominal grid
+  const concat0 = 2 ** Number(sections[0].IMAGE_CONCAT_FACTOR);
+  const [imageWidth0, imageHeight0] = [Number(sections[0].DIGITIZER_WIDTH), Number(sections[0].DIGITIZER_HEIGHT)];
+  const [overlapX0, overlapY0] = [Number(sections[0].OVERLAP_X), Number(sections[0].OVERLAP_Y)];
+  const positionsX = Math.floor(imagesX / divisions), positionCount = positionsX * Math.floor(imagesY / divisions);
+  const rawPositions = nonhierRecord("VIMSLIDE_POSITION_BUFFER");
+  const compressedPositions = rawPositions ? null : nonhierRecord("StitchingIntensityLayer");
+  const positions = new Int32Array(positionCount * 2);
+  if (rawPositions || compressedPositions) {
+    const buffer = rawPositions ?? new Response(compressedPositions.stream().pipeThrough(new DecompressionStream("deflate")));
+    const records = new DataView(await buffer.arrayBuffer());
+    if (records.byteLength < positionCount * 9) throw new Error("its position map is shorter than its camera grid");
+    for (let i = 0; i < positionCount; i++)
+      [positions[2 * i], positions[2 * i + 1]] = [records.getInt32(9 * i + 1, true) * concat0, records.getInt32(9 * i + 5, true) * concat0];
+  } else {
+    for (let i = 0; i < positionCount; i++)
+      [positions[2 * i], positions[2 * i + 1]] = [(i % positionsX) * (imageWidth0 * divisions - overlapX0), Math.floor(i / positionsX) * (imageHeight0 * divisions - overlapY0)];
+  }
+
+  // slide size: camera images edge to edge, less the overlap between photos, truncated at each step as OpenSlide sums into an integer
+  let [baseWidth, baseHeight] = [0, 0];
+  for (let i = 0; i < imagesX; i++) baseWidth = Math.trunc(baseWidth + imageWidth0 - (i % divisions === divisions - 1 && i !== imagesX - 1 ? overlapX0 : 0));
+  for (let i = 0; i < imagesY; i++) baseHeight = Math.trunc(baseHeight + imageHeight0 - (i % divisions === divisions - 1 && i !== imagesY - 1 ? overlapY0 : 0));
+  const [width, height] = [Math.floor(baseWidth / concat0), Math.floor(baseHeight / concat0)];
+
+  // each level's images are cut into tiles, one per photo they span, each placed at its photo's position (OpenSlide's tilemap)
+  const subtiles = !!(rawPositions || compressedPositions) || overlapX0 !== 0 || overlapY0 !== 0;
+  const activePositions = new Set();
+  const levels = [];
+  let concatExponent = 0;
+  const levelTable = int32(hierRoot);
+  for (const [level, section] of sections.entries()) {
+    concatExponent += Number(section.IMAGE_CONCAT_FACTOR);
+    const imageConcat = 2 ** concatExponent;
+    const positionsPerImage = Math.max(1, Math.floor(imageConcat / divisions));
+    const tileCountDivisor = subtiles ? Math.min(imageConcat, divisions) : imageConcat;
+    const tilesPerImage = subtiles ? positionsPerImage : 1;
+    const positionsPerTile = subtiles ? 1 : positionsPerImage;
+    const [imageWidth, imageHeight] = [Number(section.DIGITIZER_WIDTH), Number(section.DIGITIZER_HEIGHT)];
+    const [tileWidth, tileHeight] = [imageWidth / tilesPerImage, imageHeight / tilesPerImage];
+    const downsample = imageConcat / concat0;
+    const type = {JPEG: "image/jpeg", PNG: "image/png", BMP24: "image/bmp"}[section.IMAGE_FORMAT];
+    if (!type) throw new Error(`its ${section.IMAGE_FORMAT} images are not supported`);
+    const tiles = [];
+    let page = int32(int32(levelTable + 4 * level) + 4);
+    do {
+      const [count, next] = [int32(page), int32(page + 4)];
+      for (let i = 0, entry = page + 8; i < count; i++, entry += 16) {
+        const [imageIndex, offset, length, fileNumber] = [int32(entry), int32(entry + 4), int32(entry + 8), int32(entry + 12)];
+        const image = {key: `${fileNumber}:${offset}`, fileNumber, offset, length, type};  // sliced only when decoded: a Blob per image costs browser memory
+        const [x, y] = [imageIndex % imagesX, Math.floor(imageIndex / imagesX)];
+        for (let yi = 0; yi < tilesPerImage && y + yi * divisions < imagesY; yi++) {
+          for (let xi = 0; xi < tilesPerImage && x + xi * divisions < imagesX; xi++) {
+            const [xx, yy] = [x + xi * divisions, y + yi * divisions];
+            const [xp, yp] = [Math.floor(xx / divisions), Math.floor(yy / divisions)];
+            const position = yp * positionsX + xp;
+            // a tile is kept only if a level-0 image covers one of its photos; unscanned photos may sit at (0, 0)
+            if (level === 0) {
+              if (positions[2 * position] === 0 && positions[2 * position + 1] === 0 && (xp || yp)) continue;
+              activePositions.add(position);
+            } else {
+              let active = false;
+              for (let ypp = yp; ypp < yp + positionsPerTile && !active; ypp++)
+                for (let xpp = xp; xpp < xp + positionsPerTile && !active; xpp++) active = activePositions.has(ypp * positionsX + xpp);
+              if (!active) continue;
+            }
+            const left = (positions[2 * position] + imageWidth0 * (xx - xp * divisions)) / concat0;
+            const top = (positions[2 * position + 1] + imageHeight0 * (yy - yp * divisions)) / concat0;
+            const order = [Math.floor(y / tileCountDivisor) + yi, Math.floor(x / tileCountDivisor) + xi];
+            tiles.push({image, sourceX: tileWidth * xi, sourceY: tileHeight * yi, left, top, order});
+          }
+        }
+      }
+      page = next;
+    } while (page !== 0);
+    // later tiles cover earlier ones where photos overlap, in row-major tile order as OpenSlide paints them
+    tiles.sort((a, b) => a.order[0] - b.order[0] || a.order[1] - b.order[1]);
+    // spatial index: buckets of one tile's level-0 size, each tile in every bucket it touches
+    const [cellWidth, cellHeight] = [tileWidth * downsample, tileHeight * downsample];
+    const cells = new Map();
+    for (const [rank, tile] of tiles.entries()) {
+      tile.rank = rank;
+      for (let cy = Math.floor(tile.top / cellHeight); cy <= Math.floor((tile.top + cellHeight) / cellHeight); cy++)
+        for (let cx = Math.floor(tile.left / cellWidth); cx <= Math.floor((tile.left + cellWidth) / cellWidth); cx++)
+          (cells.get(`${cx},${cy}`) ?? cells.set(`${cx},${cy}`, []).get(`${cx},${cy}`)).push(tile);
+    }
+    const tilesIn = (x0, y0, x1, y1) => {
+      const found = new Set();
+      for (let cy = Math.floor(y0 / cellHeight) - 1; cy <= Math.floor(y1 / cellHeight); cy++)
+        for (let cx = Math.floor(x0 / cellWidth) - 1; cx <= Math.floor(x1 / cellWidth); cx++)
+          for (const tile of cells.get(`${cx},${cy}`) ?? [])
+            if (tile.left < x1 && tile.left + cellWidth > x0 && tile.top < y1 && tile.top + cellHeight > y0) found.add(tile);
+      return [...found].sort((a, b) => a.rank - b.rank);
+    };
+    levels.push({downsample, tileWidth, tileHeight, tilesIn});
+  }
+
+  // decoded camera images, least recently used first out; evicted ones are not closed, as a region read or tile may still draw them
+  const decoded = new Map();
+  const decode = image => {
+    let bitmap = decoded.get(image.key);
+    decoded.delete(image.key);
+    bitmap ??= createImageBitmap(dataFiles[image.fileNumber].slice(image.offset, image.offset + image.length, image.type), {colorSpaceConversion: "none"});
+    decoded.set(image.key, bitmap);
+    for (const key of [...decoded.keys()].slice(0, Math.max(0, decoded.size - MRXS_IMAGE_CACHE))) decoded.delete(key);
+    return bitmap;
+  };
+  // level-0 region [x0, x1) x [y0, y1) drawn into a context of the given size from the finest level no finer than needed
+  async function drawRegion(context, x0, y0, x1, y1, outWidth, outHeight) {
+    const scale = (x1 - x0) / outWidth;
+    const {downsample, tileWidth, tileHeight, tilesIn} = levels.findLast(level => level.downsample <= scale * 1.01) ?? levels[0];
+    const tiles = tilesIn(x0, y0, x1, y1);
+    const bitmaps = await Promise.all(tiles.map(tile => decode(tile.image)));
+    for (const [i, tile] of tiles.entries())
+      context.drawImage(bitmaps[i], tile.sourceX, tile.sourceY, tileWidth, tileHeight,
+        (tile.left - x0) / scale, (tile.top - y0) / scale, tileWidth * downsample / scale, tileHeight * downsample / scale);
+  }
+
+  const bgr = Number(sections[0].IMAGE_FILL_COLOR_BGR);
+  const background = `rgb(${bgr & 255}, ${(bgr >> 8) & 255}, ${(bgr >> 16) & 255})`;
+  const maxLevel = Math.ceil(Math.log2(Math.max(width, height)));
+  const source = new OpenSeadragon.TileSource({width, height, tileSize: TIFF_TILE, tileOverlap: 0, minLevel: 0, maxLevel});
+  const id = ++tiffCount;
+  source.getTileUrl = (level, x, y) => `mrxs${id}/${level}/${x}/${y}`;  // only a cache key
+  source.downloadTileAbort = () => {};
+  source.downloadTileStart = async job => {
+    const [level, x, y] = job.src.split("/").slice(1).map(Number);
+    const downsample = 2 ** (maxLevel - level);
+    const [x0, y0] = [x * TIFF_TILE * downsample, y * TIFF_TILE * downsample];
+    const [x1, y1] = [Math.min(width, x0 + TIFF_TILE * downsample), Math.min(height, y0 + TIFF_TILE * downsample)];
+    const [tileWidth, tileHeight] = [Math.ceil((x1 - x0) / downsample), Math.ceil((y1 - y0) / downsample)];
+    try {
+      const canvas = new OffscreenCanvas(tileWidth, tileHeight), context = canvas.getContext("2d");
+      context.fillStyle = background;
+      context.fillRect(0, 0, tileWidth, tileHeight);
+      context.imageSmoothingQuality = "high";
+      await drawRegion(context, x0, y0, x0 + tileWidth * downsample, y0 + tileHeight * downsample, tileWidth, tileHeight);
+      job.finish(canvas.transferToImageBitmap());
+    } catch (error) {
+      job.finish(null, null, error.message);
+    }
+  };
+
+  const mpp = Number(sections[0].MICROMETER_PER_PIXEL_X) || null;
+  const metadata = metadataRows({
+    format: ["MIRAX (3DHistech)", sections[0].IMAGE_FORMAT].filter(Boolean).join(", "),
+    width, height, mpp, levels: sections.length, bytes: [...folder.values()].reduce((sum, file) => sum + file.size, 0),
+    objective: general.OBJECTIVE_MAGNIFICATION,
+    scanner: general.CAMERA_TYPE && `camera ${general.CAMERA_TYPE}`,
+    scanned: general.SLIDE_CREATIONDATETIME,
+    original: general.SLIDE_NAME,
+  });
+  return {width, height, mpp, metadata, drawRegion, background, source};
+}
+
+// slides are listed at once, and each is read when first shown
+const slideName = file => file.name.replace(/\.[^.]+$/, "").replace(/\.ome$/i, "");
+const openEntry = entry => entry.opening ??= (entry.mrxs ? openMRXS(entry.mrxs) : openTIFF(entry.file)).then(opened => Object.assign(entry, opened));
+// an MRXS slide is the folder holding Slidedat.ini, named after it; the .mrxs file beside that folder is not needed
+const hasSlidedat = files => files.some(file => file.name.toLowerCase() === "slidedat.ini");
+const mrxsEntry = (name, files) => ({name, mrxs: new Map(files.map(file => [file.name.toLowerCase(), file]))});
+const handleFiles = async folder => { const files = []; for await (const entry of folder.values()) if (entry.kind === "file") files.push(await entry.getFile()); return files; };
+function addSlideFiles(files, from, mrxsEntries = []) {
+  const added = [...files.filter(file => isTIFF(file.name)).map(file => ({name: slideName(file), file})), ...mrxsEntries];
+  if (!added.length) {
+    const mrxs = files.find(file => /\.mrxs$/i.test(file.name));
+    $("loading").hidden = !from && !mrxs;
+    $("loading").textContent = mrxs ? `an MRXS slide is a folder: use Open folder on the folder holding ${mrxs.name} and its ${slideName(mrxs)} folder` : `no TIFF, SVS or MRXS slides in ${from}`;
+    return;
+  }
+  for (const entry of added) {
+    const index = slides.findIndex(({name}) => name === entry.name);  // reopening replaces
+    if (index >= 0) slides.splice(index, 1);
+    slides.push(entry);
+    if (slide?.name === entry.name) slide = null;  // so openSlide reopens it
+    if (compareSlide?.name === entry.name) compareSlide = null;
+  }
+  listSlides();
+  const [first] = added.map(({name}) => name).sort((a, b) => a.localeCompare(b, undefined, {numeric: true}));
+  setHash(first, compareSlide?.name);
+  return openSlide();
+}
+$("open-slide").addEventListener("click", () => $("slide-file").click());
+$("slide-file").addEventListener("change", () => {
+  const files = [...$("slide-file").files];
+  $("slide-file").value = "";
+  addSlideFiles(files);
+});
+// iPad browsers can pick several files but not a folder
+if (!window.showDirectoryPicker && !("webkitdirectory" in $("slide-folder"))) $("open-slide-folder").hidden = true;
+$("open-slide-folder").addEventListener("click", async () => {
+  if (!window.showDirectoryPicker) return $("slide-folder").click();
+  try {
+    const folder = await showDirectoryPicker();
+    const [files, mrxs] = [[], []];
+    for await (const entry of folder.values()) {
+      if (entry.kind === "file" && /\.(tiff?|btf|tf8|svs|mrxs)$/i.test(entry.name) || entry.name.toLowerCase() === "slidedat.ini") files.push(await entry.getFile());
+      else if (entry.kind === "directory" && await entry.getFileHandle("Slidedat.ini").then(() => true, () => false)) mrxs.push(mrxsEntry(entry.name, await handleFiles(entry)));
+    }
+    if (hasSlidedat(files)) mrxs.push(mrxsEntry(folder.name, await handleFiles(folder)));  // the MRXS folder itself was picked
+    addSlideFiles(files, folder.name, mrxs);
+  } catch (error) {
+    if (error.name !== "AbortError") $("slide-folder").click();
+  }
+});
+$("slide-folder").addEventListener("change", () => {
+  const files = [...$("slide-folder").files];
+  $("slide-folder").value = "";
+  const folderOf = file => file.webkitRelativePath.split("/").slice(0, -1).join("/");
+  const mrxs = Object.entries(Object.groupBy(files, folderOf)).filter(([, files]) => hasSlidedat(files)).map(([folder, files]) => mrxsEntry(folder.split("/").pop(), files));
+  if (files.length) addSlideFiles(files, files[0].webkitRelativePath.split("/")[0], mrxs);
+});
+
+// the slides named in the URL hash
+function hashSlides() {
+  const [name, compareName] = decodeURIComponent(location.hash.slice(1)).split("|");
+  return [slides.find(slide => slide.name === name) ?? slides[0], slides.find(slide => slide.name === compareName) ?? null];
+}
+
+async function openSlide() {
+  const [nextSlide, nextCompare] = hashSlides();
+  if (!nextSlide) return;
+  for (const entry of [nextSlide, nextCompare]) {
+    if (!entry || entry.source) continue;
+    $("loading").hidden = false;
+    $("loading").textContent = `opening ${entry.name}…`;
+    try {
+      await openEntry(entry);
+      $("loading").hidden = true;
+    } catch (error) {
+      entry.opening = null;
+      $("loading").textContent = `could not open ${entry.name}: ${error.message}`;
+      renderTabs();
+      return;
+    }
+  }
+  const [latestSlide, latestCompare] = hashSlides();
+  if (latestSlide !== nextSlide || latestCompare !== nextCompare) return;  // other slides were picked meanwhile
+  $("compare").value = nextCompare?.name ?? "";
+  document.body.classList.toggle("split", !!nextCompare);
+  $("viewer2").hidden = !nextCompare;
+  if (nextCompare && nextCompare !== compareSlide) viewer2.open(nextCompare.source);
+  compareSlide = nextCompare;
+  if (nextSlide === slide) return draw();
+
+  if (slide) Object.assign(slide, {bounds: viewer.viewport.getBounds(), rotation: viewer.viewport.getRotation(), flip: viewer.viewport.getFlip()});
+  slide = nextSlide;
+  slide.areas ??= [];
+  [draft, draftStrokes] = [[], []];
+  document.title = slide.name;
+  renderTabs();
+  renderAreas();
+  setView(slide.rotation ?? 0, slide.flip ?? false);
+  viewer.open(slide.source);
+}
+
+// drag and drop: slide files, folders of slides, or MRXS folders
+const entryFile = entry => new Promise((resolve, reject) => entry.file(resolve, reject));
+async function folderEntries(folder) {
+  const reader = folder.createReader(), entries = [];
+  for (let batch; (batch = await new Promise((resolve, reject) => reader.readEntries(resolve, reject))).length;) entries.push(...batch);
+  return entries;
+}
+const folderFiles = async folder => Promise.all((await folderEntries(folder)).filter(entry => entry.isFile).map(entryFile));
+async function mrxsFolders(folder, files) {
+  if (hasSlidedat(files)) return [mrxsEntry(folder.name, files)];
+  const found = [];
+  for (const entry of await folderEntries(folder)) {
+    if (!entry.isDirectory) continue;
+    const inner = await folderFiles(entry);
+    if (hasSlidedat(inner)) found.push(mrxsEntry(entry.name, inner));
+  }
+  return found;
+}
+window.addEventListener("dragenter", event => { if (event.dataTransfer.types.includes("Files")) $("drop").hidden = false; });
+window.addEventListener("dragover", event => event.preventDefault());
+window.addEventListener("drop", event => event.preventDefault());
+$("drop").addEventListener("dragleave", () => { $("drop").hidden = true; });
+$("drop").addEventListener("drop", async event => {
+  $("drop").hidden = true;
+  // every item must be read before the first await, after which the drop data is gone
+  const dropped = [...event.dataTransfer.items].map(item => [item.webkitGetAsEntry(), item.getAsFile()]);
+  const files = dropped.map(([, file]) => file).filter(file => file && isTIFF(file.name));
+  if (files.length) await addSlideFiles(files);
+  for (const [entry, file] of dropped.filter(([, file]) => !(file && isTIFF(file.name)))) {
+    if (entry?.isDirectory) {
+      const inner = await folderFiles(entry);
+      addSlideFiles(inner, entry.name, await mrxsFolders(entry, inner));
+    } else if (file && !dropped.some(([entry]) => entry?.isDirectory)) addSlideFiles([file], file.name);
+  }
+});
+
+// highlighting areas on the main pane: a click places a corner, a drag traces
+const AREA_COLOR = [255, 220, 0];
+const CLOSE_DISTANCE = 10;  // screen px from the first corner within which a click closes the area
+const TRACE_STEP = 4;  // screen px between traced points
+let drawing = false;
+let draft = [];  // corners of the area being drawn, in slide px
+let draftStrokes = [];  // where in draft each click or drag began, for undo
+let pressed = null;  // {position, dragged} while the pointer is down
+let pointer = null;  // pointer in slide px, for the line to the next corner
+
+const screenScale = () => { const origin = toScreen(viewer, 0, 0), alongX = toScreen(viewer, 1, 0); return Math.hypot(alongX.x - origin.x, alongX.y - origin.y); };
+const screenDistance = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]) * screenScale();
+const slidePoint = position => { const point = toImage(viewer, position); return [point.x, point.y]; };
+
+function finishDraft() {
+  const corners = draft.filter((point, i) => i === 0 || screenDistance(point, draft[i - 1]) >= 2);  // a double-click's second corner
+  [draft, draftStrokes] = [[], []];
+  if (corners.length >= 3) {
+    slide.areas.push({number: (slide.areas.at(-1)?.number ?? 0) + 1, ring: corners.map(([x, y]) => [Math.round(x), Math.round(y)])});
+    renderAreas();
+  }
+  draw();
+}
+
+function undo() {
+  if (draft.length) {
+    draft.length = draftStrokes.pop();
+    return draw();
+  }
+  if (!slide?.areas.length) return;
+  slide.areas.pop();
+  renderAreas();
+  draw();
+}
+
+function setDrawing(on) {
+  if (!on && draft.length) finishDraft();
+  drawing = on;
+  viewer.gestureSettingsMouse.dragToPan = viewer.gestureSettingsMouse.clickToZoom = !on;
+  viewer.canvas.style.cursor = on ? "crosshair" : "";
+  $("highlight").textContent = on ? "Done" : "Highlight area";
+  $("highlight").classList.toggle("active", on);
+  $("draw-help").hidden = !on;
+}
+$("highlight").addEventListener("click", () => setDrawing(!drawing));
+
+viewer.addHandler("canvas-press", event => { if (drawing) pressed = {position: event.position, dragged: false}; });
+viewer.addHandler("canvas-drag", event => {
+  if (!drawing || !pressed) return;
+  if (!pressed.dragged) {
+    if (event.position.distanceTo(pressed.position) < TRACE_STEP) return;
+    pressed.dragged = true;
+    draftStrokes.push(draft.length);
+    draft.push(slidePoint(pressed.position));
+  }
+  pointer = slidePoint(event.position);
+  if (screenDistance(pointer, draft.at(-1)) >= TRACE_STEP) draft.push(pointer);
+  draw();
+});
+viewer.addHandler("canvas-release", event => {
+  if (!drawing || !pressed) return;
+  const {dragged} = pressed;
+  pressed = null;
+  if (dragged) {
+    // a single stroke is a whole outline
+    if (draftStrokes.length === 1) finishDraft();
+    return;
+  }
+  const point = slidePoint(event.position);
+  if (draft.length >= 3 && screenDistance(point, draft[0]) < CLOSE_DISTANCE) return finishDraft();
+  draftStrokes.push(draft.length);
+  draft.push(point);
+  draw();
+});
+viewer.addHandler("canvas-double-click", () => { if (drawing) finishDraft(); });
+
+window.addEventListener("keydown", event => {
+  if (!drawing) return;
+  if (event.key === "Enter") finishDraft();
+  else if (event.key === "Escape") draft.length ? ([draft, draftStrokes] = [[], []], draw()) : setDrawing(false);
+  else if (event.key === "Backspace" || event.key === "Delete" || (event.key === "z" && (event.metaKey || event.ctrlKey))) undo();
+  else return;
+  event.preventDefault();
+  event.stopPropagation();
+}, true);
+
+// while drawing, a trackpad works as in map apps, since dragging draws: two fingers pan and a pinch zooms
+// (Chrome sends a pinch as ctrl+wheel, Safari as gesture events)
+const pointerPoint = event => {
+  const rect = viewer.container.getBoundingClientRect();
+  return viewer.viewport.pointFromPixel(unmirrored(viewer, new OpenSeadragon.Point(event.clientX - rect.left, event.clientY - rect.top)));
+};
+viewer.container.addEventListener("wheel", event => {
+  if (!drawing) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const unit = event.deltaMode === 1 ? 16 : 1;  // lines or px
+  if (event.ctrlKey) viewer.viewport.zoomBy(Math.exp(-event.deltaY * unit / 100), pointerPoint(event), true);
+  else viewer.viewport.panBy(viewer.viewport.deltaPointsFromPixels(new OpenSeadragon.Point((viewer.viewport.getFlip() ? -1 : 1) * event.deltaX * unit, event.deltaY * unit)), true);
+  viewer.viewport.applyConstraints();
+}, {capture: true, passive: false});
+let gestureScale = 1;
+viewer.container.addEventListener("gesturestart", event => { if (drawing) { event.preventDefault(); gestureScale = 1; } });
+viewer.container.addEventListener("gesturechange", event => {
+  if (!drawing) return;
+  event.preventDefault();
+  viewer.viewport.zoomBy(event.scale / gestureScale, pointerPoint(event), true);
+  viewer.viewport.applyConstraints();
+  gestureScale = event.scale;
+});
+
+// an area is saved as it looks on screen: turned and mirrored as the view is, cut out along its outline, transparent outside
+const MAX_IMAGE_PIXELS = navigator.maxTouchPoints > 1 ? 16e6 : 100e6;  // what the browser's canvas holds (iPad Safari: 4096²)
+const MAX_IMAGE_SIDE = 16384;
+const IMAGE_PIECE = 2048;  // image px per side of the pieces the slide is read in
+
+// slide px -> screen-oriented slide px, and the box an area spans in it
+const viewTurn = () => new DOMMatrix().scaleSelf(viewer.viewport.getFlip() ? -1 : 1, 1).rotateSelf(viewer.viewport.getRotation());
+function turnedBox(ring, turn) {
+  const points = ring.map(([x, y]) => turn.transformPoint({x, y}));
+  const xs = points.map(point => point.x), ys = points.map(point => point.y);
+  return {left: Math.min(...xs), top: Math.min(...ys), width: Math.max(...xs) - Math.min(...xs), height: Math.max(...ys) - Math.min(...ys)};
+}
+// slide px per image px: 1 (full resolution) unless the browser cannot hold the image
+function imageDownsample({width, height}) {
+  let downsample = 1;
+  while (width * height / downsample ** 2 > MAX_IMAGE_PIXELS || Math.max(width, height) / downsample > MAX_IMAGE_SIDE) downsample *= 2;
+  return downsample;
+}
+
+async function renderArea(area, turn, onProgress) {
+  const box = turnedBox(area.ring, turn), downsample = imageDownsample(box);
+  const canvas = new OffscreenCanvas(Math.max(1, Math.ceil(box.width / downsample)), Math.max(1, Math.ceil(box.height / downsample)));
+  const context = canvas.getContext("2d");
+  const toImagePx = new DOMMatrix().scaleSelf(1 / downsample).translateSelf(-box.left, -box.top).multiplySelf(turn);
+  context.setTransform(toImagePx);
+  const outline = new Path2D();
+  outline.moveTo(...area.ring[0]);
+  for (const point of area.ring) outline.lineTo(...point);
+  outline.closePath();
+  context.clip(outline);
+  context.imageSmoothingQuality = "high";
+  if (slide.background) {
+    context.fillStyle = slide.background;
+    context.fillRect(0, 0, slide.width, slide.height);
+  }
+
+  // the outline's slide px box, read in pieces, each overlapping the next by a few px so no seams show once turned
+  const xs = area.ring.map(([x]) => x), ys = area.ring.map(([, y]) => y);
+  const [x0, y0] = [Math.max(0, Math.floor(Math.min(...xs))), Math.max(0, Math.floor(Math.min(...ys)))];
+  const [x1, y1] = [Math.min(slide.width, Math.ceil(Math.max(...xs))), Math.min(slide.height, Math.ceil(Math.max(...ys)))];
+  const [step, overlap] = [IMAGE_PIECE * downsample, 2 * downsample];
+  const pieces = [];
+  for (let y = y0; y < y1; y += step) for (let x = x0; x < x1; x += step) pieces.push([x, y]);
+  for (const [i, [x, y]] of pieces.entries()) {
+    const [left, top] = [Math.max(0, x - overlap), Math.max(0, y - overlap)];
+    const [right, bottom] = [Math.min(slide.width, x + step + overlap), Math.min(slide.height, y + step + overlap)];
+    context.setTransform(toImagePx.translate(left, top).scale(downsample));
+    await slide.drawRegion(context, left, top, right, bottom, (right - left) / downsample, (bottom - top) / downsample);
+    onProgress((i + 1) / pieces.length);
+  }
+  return {canvas, downsample};
+}
+
+// saved where the user picks (Chrome) or as a download; the picker opens first, while the click still allows it
+async function saveImage(suggestedName, render) {
+  try {
+    const handle = window.showSaveFilePicker ? await showSaveFilePicker({suggestedName, types: [{description: "PNG image", accept: {"image/png": [".png"]}}]}) : null;
+    const blob = await render();
+    if (handle) {
+      const writable = await handle.createWritable();
+      await writable.write(blob);
+      await writable.close();
+    } else {
+      const link = Object.assign(document.createElement("a"), {href: URL.createObjectURL(blob), download: suggestedName});
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(link.href), 60000);
+    }
+    return true;
+  } catch (error) {
+    if (error.name === "AbortError") return false;
+    throw error;
+  }
+}
+
+async function saveArea(area) {
+  const turn = viewTurn(), box = turnedBox(area.ring, turn), downsample = imageDownsample(box);
+  const [width, height] = [Math.ceil(box.width / downsample), Math.ceil(box.height / downsample)];
+  if (downsample > 1 && !confirm(`Area ${area.number} is ${Math.ceil(box.width).toLocaleString()} × ${Math.ceil(box.height).toLocaleString()} px at full resolution, more than this browser can hold in one image. Save it at 1/${downsample} resolution (${width.toLocaleString()} × ${height.toLocaleString()} px)? Or cancel and highlight a smaller area.`)) return;
+  const [x, y] = [Math.min(...area.ring.map(([x]) => x)), Math.min(...area.ring.map(([, y]) => y))];
+  const name = `${slide.name}_x${x}_y${y}${downsample > 1 ? `_1to${downsample}` : ""}.png`;
+  const status = text => { $("loading").hidden = !text; $("loading").textContent = text; };
+  try {
+    await saveImage(name, async () => {
+      const {canvas} = await renderArea(area, turn, fraction => status(`reading area ${area.number}: ${Math.round(fraction * 100)}%`));
+      status(`saving area ${area.number}…`);
+      return canvas.convertToBlob({type: "image/png"});
+    });
+    status("");
+  } catch (error) {
+    status(`could not save area ${area.number}: ${error.message}`);
+  }
+}
+
+// fit the area on screen, as the view is turned
+function goToArea(area) {
+  const box = turnedBox(area.ring, viewTurn());
+  const {x: width, y: height} = viewer.viewport.getContainerSize();
+  const scale = 0.85 * Math.min(width / box.width, height / box.height);  // screen px per slide px
+  const xs = area.ring.map(([x]) => x), ys = area.ring.map(([, y]) => y);
+  const centre = viewer.viewport.imageToViewportCoordinates((Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...ys) + Math.max(...ys)) / 2);
+  viewer.viewport.zoomTo(viewer.viewport.imageToViewportZoom(scale));
+  viewer.viewport.panTo(centre);
+}
+
+function renderAreas() {
+  const areas = slide?.areas ?? [];
+  const turn = viewTurn();
+  $("areas").replaceChildren(...areas.map(area => {
+    const row = document.createElement("div");
+    row.className = "area";
+    row.innerHTML = `<span title="show this area"></span><button title="save this area as a full-resolution PNG, turned and mirrored as on screen">⤓</button><button title="remove this area">×</button>`;
+    const [label, save, remove] = row.children;
+    const box = turnedBox(area.ring, turn);
+    label.textContent = `Area ${area.number}`;
+    row.insertBefore(Object.assign(document.createElement("span"), {className: "count", textContent: `${Math.ceil(box.width).toLocaleString()} × ${Math.ceil(box.height).toLocaleString()} px`}), save);
+    label.addEventListener("click", () => goToArea(area));
+    save.addEventListener("click", () => saveArea(area));
+    remove.addEventListener("click", () => { slide.areas.splice(slide.areas.indexOf(area), 1); renderAreas(); draw(); });
+    return row;
+  }));
+}
+
+let cursorText = "";
+let zoomText = "";
+
+const draw = () => panes.forEach(drawPane);
+
+// the areas are drawn on both panes, since compared slides share the slide px frame
+function strokeOutline(ctx, path, scale) {
+  ctx.strokeStyle = "rgba(0, 0, 0, 0.7)";
+  ctx.lineWidth = 6 / scale;
+  ctx.stroke(path);
+  ctx.strokeStyle = `rgb(${AREA_COLOR})`;
+  ctx.lineWidth = 3 / scale;
+  ctx.stroke(path);
+}
+// the slide's metadata, and a scale bar of a round length (1, 2 or 5 × 10ⁿ µm) at most 120 screen px long
+let infoSlide = null;
+function renderInfo(scale) {
+  $("info").hidden = false;
+  if (infoSlide !== slide) {
+    infoSlide = slide;
+    $("metadata").querySelector("table").replaceChildren(...slide.metadata.map(row => {
+      const tr = document.createElement("tr");
+      tr.append(...row.map(text => Object.assign(document.createElement("td"), {textContent: text})));
+      return tr;
+    }));
+  }
+  $("scale").hidden = !slide.mpp;
+  if (!slide.mpp) return;
+  const micronsPerScreenPx = slide.mpp / scale;
+  const longest = 120 * micronsPerScreenPx;
+  const microns = [5, 2, 1].map(factor => factor * 10 ** Math.floor(Math.log10(longest))).find(length => length <= longest);
+  $("scale-bar").style.width = `${microns / micronsPerScreenPx}px`;
+  $("scale-label").textContent = microns >= 1000 ? `${+(microns / 1000).toFixed(3)} mm` : `${+microns.toFixed(3)} µm`;
+}
+// the info box opens as it was last left, or open on wide screens
+try { $("metadata").open = (localStorage.getItem("slide-info-open") ?? String(innerWidth >= 700)) === "true"; } catch { $("metadata").open = innerWidth >= 700; }
+$("metadata").addEventListener("toggle", () => { try { localStorage.setItem("slide-info-open", $("metadata").open); } catch {} });
+
+function drawPane(pane) {
+  const {viewer, ctx} = pane;
+  const overlay = ctx.canvas;
+  const dpr = window.devicePixelRatio || 1;
+  const width = viewer.canvas.clientWidth, height = viewer.canvas.clientHeight;
+  if (overlay.width !== width * dpr || overlay.height !== height * dpr) [overlay.width, overlay.height] = [width * dpr, height * dpr];
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, overlay.width, overlay.height);
+  if (!slide || !width || !viewer.world.getItemCount()) return;
+
+  // slide px -> device px
+  const origin = toScreen(viewer, 0, 0), alongX = toScreen(viewer, 1, 0), alongY = toScreen(viewer, 0, 1);
+  const scale = Math.hypot(alongX.x - origin.x, alongX.y - origin.y);
+  const toDevice = new DOMMatrix([(alongX.x - origin.x) * dpr, (alongX.y - origin.y) * dpr, (alongY.x - origin.x) * dpr, (alongY.y - origin.y) * dpr, origin.x * dpr, origin.y * dpr]);
+  ctx.lineJoin = "round";
+  for (const area of slide.areas) {
+    ctx.setTransform(toDevice);
+    const path = new Path2D();
+    path.moveTo(...area.ring[0]);
+    for (const point of area.ring) path.lineTo(...point);
+    path.closePath();
+    strokeOutline(ctx, path, scale);
+    // its number by its topmost point on screen
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const top = area.ring.map(([x, y]) => toScreen(viewer, x, y)).reduce((a, b) => b.y < a.y ? b : a);
+    ctx.font = "bold 14px system-ui, sans-serif";
+    ctx.textAlign = "center";
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = "rgba(0, 0, 0, 0.8)";
+    ctx.strokeText(area.number, top.x, top.y - 8);
+    ctx.fillStyle = `rgb(${AREA_COLOR})`;
+    ctx.fillText(area.number, top.x, top.y - 8);
+  }
+  if (viewer !== panes[0].viewer) return;
+
+  // the area being drawn, with a line to the pointer and its first corner filled when a click would close it
+  ctx.setTransform(toDevice);
+  if (draft.length) {
+    const path = new Path2D();
+    path.moveTo(...draft[0]);
+    for (const point of draft) path.lineTo(...point);
+    if (pointer && !pressed?.dragged) path.lineTo(...pointer);
+    strokeOutline(ctx, path, scale);
+    const closes = draft.length >= 3 && pointer && screenDistance(pointer, draft[0]) < CLOSE_DISTANCE;
+    ctx.beginPath();
+    ctx.arc(...draft[0], (closes ? 7 : 5) / scale, 0, 2 * Math.PI);
+    ctx.fillStyle = closes ? `rgb(${AREA_COLOR})` : "black";
+    ctx.fill();
+    ctx.stroke();
+  }
+  zoomText = slide.mpp ? `${(scale * 10 / slide.mpp).toFixed(1)}×` : `${scale.toFixed(2)} screen px/px`;
+  $("status").textContent = [cursorText, zoomText].filter(Boolean).join("  ·  ");
+  renderInfo(scale);
+}
+
+for (const {viewer} of panes) new OpenSeadragon.MouseTracker({
+  element: viewer.container,
+  moveHandler: event => {
+    if (!slide || !viewer.world.getItemCount()) return;
+    const point = toImage(viewer, event.position);
+    if (drawing && viewer === panes[0].viewer) {
+      pointer = [point.x, point.y];
+      if (draft.length) draw();
+    }
+    cursorText = `x ${Math.round(point.x)}  y ${Math.round(point.y)} px`;
+    $("status").textContent = [cursorText, zoomText].join("  ·  ");
+  },
+});
+</script>
+</body>
+</html>
