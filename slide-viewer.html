@@ -893,7 +893,6 @@ function imageDownsample({width, height}) {
 
 async function renderArea(area, turn, onProgress) {
   const box = turnedBox(area.ring, turn), downsample = imageDownsample(box);
-  const view = {rotation: viewer.viewport.getRotation(), flip: viewer.viewport.getFlip()};
   const canvas = new OffscreenCanvas(Math.max(1, Math.ceil(box.width / downsample)), Math.max(1, Math.ceil(box.height / downsample)));
   const context = canvas.getContext("2d");
   const toImagePx = new DOMMatrix().scaleSelf(1 / downsample).translateSelf(-box.left, -box.top).multiplySelf(turn);
@@ -930,7 +929,7 @@ async function renderArea(area, turn, onProgress) {
   context.setTransform(1, 0, 0, 1, 0, 0);
   drawHighlights(context, toImagePx, size);
   context.restore();
-  drawLegend(context, canvas.width, canvas.height, downsample, view);
+  drawScaleBar(context, canvas.width, canvas.height, downsample);
   return {canvas, downsample};
 }
 
@@ -1044,39 +1043,24 @@ function drawHighlights(ctx, toOutput, size) {
 const roundMicrons = longest => [5, 2, 1].map(factor => factor * 10 ** Math.floor(Math.log10(longest))).find(length => length <= longest);
 const micronsText = microns => microns >= 1000 ? `${+(microns / 1000).toFixed(3)} mm` : `${+microns.toFixed(3)} µm`;
 
-// bottom-left of a capture: a scale bar, the pixel size and where it comes from
-function drawLegend(ctx, width, height, downsample, {rotation, flip}) {
+// bottom-left of a capture: a scale bar of a round length, at most a quarter of its width
+function drawScaleBar(ctx, width, height, downsample) {
+  if (!slide.mpp) return;
   const size = Math.max(1, Math.max(width, height) / 1000);
-  const micronsPerPx = slide.mpp && slide.mpp * downsample;
-  const objective = slide.metadata.find(([key]) => key === "Objective")?.[1];
-  const angle = Math.round(((rotation % 360) + 540) % 360 - 180), lines = [
-    slide.name,
-    [micronsPerPx ? `${+micronsPerPx.toPrecision(3)} µm/px` : "pixel size unknown", downsample > 1 && `1/${downsample} resolution`, objective && `scanned at ${objective}`].filter(Boolean).join(" · "),
-    [angle && `rotated ${angle}°`, flip && "mirrored"].filter(Boolean).join(", "),
-  ].filter(Boolean);
-  const microns = micronsPerPx && roundMicrons(0.25 * width * micronsPerPx);
-  const [pad, lineHeight] = [8 * size, 16 * size];
+  const micronsPerPx = slide.mpp * downsample;
+  const microns = roundMicrons(0.25 * width * micronsPerPx);
+  const barWidth = microns / micronsPerPx, pad = 8 * size;
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.font = `${12 * size}px system-ui, sans-serif`;
   ctx.textAlign = "left";
   ctx.textBaseline = "middle";
-  const barWidth = microns ? microns / micronsPerPx : 0;
-  const boxWidth = 2 * pad + Math.max(barWidth, ...lines.map(line => ctx.measureText(line).width));
-  const boxHeight = 2 * pad + lines.length * lineHeight + (microns ? lineHeight + 8 * size : 0);
-  const [left, top] = [0, height - boxHeight];
+  const label = micronsText(microns);
+  const boxWidth = 2 * pad + Math.max(barWidth, ctx.measureText(label).width), boxHeight = 2 * pad + 24 * size;
   ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
-  ctx.fillRect(left, top, boxWidth, boxHeight);
+  ctx.fillRect(0, height - boxHeight, boxWidth, boxHeight);
   ctx.fillStyle = "#fff";
-  let y = top + pad + lineHeight / 2;
-  if (microns) {
-    ctx.fillText(micronsText(microns), left + pad, y);
-    ctx.fillRect(left + pad, y + lineHeight / 2 + 2 * size, barWidth, 4 * size);
-    y += lineHeight + 8 * size;
-  }
-  for (const line of lines) {
-    ctx.fillText(line, left + pad, y);
-    y += lineHeight;
-  }
+  ctx.fillText(label, pad, height - boxHeight + pad + 8 * size);
+  ctx.fillRect(pad, height - pad - 4 * size, barWidth, 4 * size);
 }
 // the slide's metadata, and a scale bar of a round length (1, 2 or 5 × 10ⁿ µm) at most 120 screen px long
 let infoSlide = null;
