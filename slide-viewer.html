@@ -8,82 +8,85 @@
 <title>Slide viewer</title>
 <style>
   html, body { margin: 0; height: 100%; background: #1a1a1a; color: #eee; font: 13px system-ui, sans-serif; }
-  #viewer, #viewer2 { position: absolute; inset: 0; }
-  body.split #viewer { right: 50%; }
-  body.split #viewer2 { left: 50%; border-left: 2px solid #555; }
+  .pane { position: absolute; inset: 0; overflow: hidden; }
+  body.split .pane:first-child { right: 50%; }
+  body.split .pane + .pane { left: 50%; border-left: 2px solid #555; }
+  .pane > .osd { position: absolute; inset: 0; }
   .box { position: absolute; background: rgba(20, 20, 20, 0.85); border-radius: 6px; padding: 8px 10px; }
-  #panel { top: 8px; right: 8px; width: 240px; max-height: calc(100% - 240px); overflow: auto; }
-  #panel select, #panel button { font: inherit; color: inherit; background: #333; border: 1px solid #555; border-radius: 4px; padding: 3px 6px; cursor: pointer; }
-  #panel select { width: 100%; }
-  #panel .buttons { display: flex; gap: 6px; margin-top: 6px; }
-  #panel .buttons button { flex: 1; }
-  #panel button:disabled { opacity: 0.5; cursor: default; }
-  #panel button.active { background: #066; border-color: #0ff; }
-  #panel h4 { display: flex; align-items: center; margin: 8px 0 2px; font-size: 12px; font-weight: 600; color: #aaa; }
-  #panel h4 span { margin-right: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  #panel h4 button { padding: 0 5px; background: none; border: none; color: #999; }
-  #panel label { display: flex; align-items: center; gap: 6px; padding: 1px 0; cursor: pointer; }
-  #panel .count { margin-left: auto; padding-left: 12px; color: #999; font-variant-numeric: tabular-nums; }
-  #panel .note { margin: 6px 0 0; color: #aaa; font-style: italic; }
-  #panel #view label { flex: 1; min-width: 0; }
-  #panel #view input { flex: 1; min-width: 0; }
-  #panel #view button { flex: none; }
-  #panel .area { display: flex; align-items: center; gap: 2px; padding: 1px 0; font-variant-numeric: tabular-nums; }
-  #panel .area input[type=text] { flex: 1; min-width: 0; font: inherit; color: inherit; background: none; border: 1px solid transparent; border-radius: 4px; padding: 1px 4px; }
-  #panel .area input[type=text]:hover, #panel .area input[type=text]:focus { border-color: #555; outline: none; }
-  #panel .area input[type=color] { width: 20px; height: 20px; padding: 0; border: none; background: none; cursor: pointer; }
-  #panel .area button { padding: 0 5px; background: none; border: none; color: #999; }
-  #panel .area button:hover, #panel h4 button:hover { color: #fff; }
-  #info { bottom: 8px; left: 8px; max-width: min(360px, calc(100% - 32px)); font-variant-numeric: tabular-nums; }
-  #info summary { cursor: pointer; color: #aaa; }
-  #info table { margin: 4px 0 6px; border-spacing: 0; }
-  #info td { padding: 0; vertical-align: top; overflow-wrap: anywhere; }
-  #info td:first-child { padding-right: 10px; color: #999; white-space: nowrap; }
-  #scale { display: flex; align-items: center; gap: 8px; margin: 4px 0 3px; }
-  #scale-bar { height: 5px; border: 2px solid #fff; border-top: none; }
-  #tabs { top: 8px; left: 8px; max-width: calc(100% - 300px); display: flex; gap: 4px; overflow-x: auto; padding: 4px; }
-  #tabs .tab { flex: none; display: flex; align-items: center; gap: 6px; padding: 3px 2px 3px 8px; background: #333; border: 1px solid #555; border-radius: 4px; color: #ccc; white-space: nowrap; cursor: pointer; }
-  #tabs .tab.active { background: #066; border-color: #0ff; color: #fff; }
-  #tabs button { font: inherit; padding: 0 4px; background: none; border: none; color: #999; cursor: pointer; }
+  .panel { top: 8px; right: 8px; width: 240px; max-height: calc(100% - 240px); overflow: auto; }
+  .panel select, .panel button { font: inherit; color: inherit; background: #333; border: 1px solid #555; border-radius: 4px; padding: 3px 6px; cursor: pointer; }
+  .panel .buttons { display: flex; gap: 6px; margin-top: 6px; }
+  .panel .buttons button { flex: 1; }
+  .panel button:disabled { opacity: 0.5; cursor: default; }
+  .panel button.active { background: #066; border-color: #0ff; }
+  .panel label { display: flex; align-items: center; gap: 6px; padding: 1px 0; cursor: pointer; }
+  .panel .count { margin-left: auto; padding-left: 12px; color: #999; font-variant-numeric: tabular-nums; }
+  .panel .note { margin: 6px 0 0; color: #aaa; font-style: italic; }
+  .panel .view label { flex: 1; min-width: 0; }
+  .panel .view input { flex: 1; min-width: 0; }
+  .panel .view button { flex: none; }
+  .panel .area { display: flex; align-items: center; gap: 2px; padding: 1px 0; font-variant-numeric: tabular-nums; }
+  .panel .area input[type=text] { flex: 1; min-width: 0; font: inherit; color: inherit; background: none; border: 1px solid transparent; border-radius: 4px; padding: 1px 4px; }
+  .panel .area input[type=text]:hover, .panel .area input[type=text]:focus { border-color: #555; outline: none; }
+  .panel .area input[type=color] { width: 20px; height: 20px; padding: 0; border: none; background: none; cursor: pointer; }
+  .panel .area button { padding: 0 5px; background: none; border: none; color: #999; }
+  .panel .area button:hover { color: #fff; }
+  .info { bottom: 8px; left: 8px; max-width: min(360px, calc(100% - 32px)); font-variant-numeric: tabular-nums; }
+  .info summary { cursor: pointer; color: #aaa; }
+  .info table { margin: 4px 0 6px; border-spacing: 0; }
+  .info td { padding: 0; vertical-align: top; overflow-wrap: anywhere; }
+  .info td:first-child { padding-right: 10px; color: #999; white-space: nowrap; }
+  .scale { display: flex; align-items: center; gap: 8px; margin: 4px 0 3px; }
+  .scale-bar { height: 5px; border: 2px solid #fff; border-top: none; }
+  .tabs { top: 8px; left: 8px; max-width: calc(100% - 300px); display: flex; gap: 4px; overflow-x: auto; padding: 4px; }
+  .tabs .tab { flex: none; display: flex; align-items: center; gap: 6px; padding: 3px 2px 3px 8px; background: #333; border: 1px solid #555; border-radius: 4px; color: #ccc; white-space: nowrap; cursor: pointer; }
+  .tabs .tab.active { background: #066; border-color: #0ff; color: #fff; }
+  .tabs button { font: inherit; padding: 0 4px; background: none; border: none; color: #999; cursor: pointer; }
   #drop { position: fixed; inset: 0; z-index: 10; display: grid; place-items: center; background: rgba(0, 0, 0, 0.6); border: 3px dashed #888; font-size: 20px; }
   [hidden] { display: none !important; }
   #drop * { pointer-events: none; }
 </style>
 </head>
 <body>
-<div id="viewer"></div>
-<div id="viewer2" hidden></div>
-<div id="panel" class="box">
-  <p id="no-slides" class="note" hidden>Open a slide (.tiff, .svs, or an .mrxs folder) to start.</p>
-  <div class="buttons">
-    <button id="open-slide" title="TIFF or SVS slides on this computer; they are read in place, never uploaded. For MRXS, use Open folder">Open slide</button>
-    <button id="open-slide-folder" title="every TIFF, SVS or MRXS slide in a folder, listed at once; each is read when picked. An MRXS slide is the folder beside its .mrxs file">Open folder</button>
+<div id="panes"></div>
+<!-- one per pane; the first pane's parts also get their data-part as id -->
+<template id="pane-template">
+<div class="pane">
+  <div class="osd" data-part="viewer"></div>
+  <div class="tabs box" data-part="tabs" role="tablist" hidden></div>
+  <div class="panel box" data-part="panel">
+    <p class="note" data-part="no-slides" hidden>Open a slide (.tiff, .svs, or an .mrxs folder) to start.</p>
+    <div class="buttons">
+      <button data-part="open-slide" title="TIFF or SVS slides on this computer; they are read in place, never uploaded. For MRXS, use Open folder">Open slide</button>
+      <button data-part="open-slide-folder" title="every TIFF, SVS or MRXS slide in a folder, listed at once; each is read when picked. An MRXS slide is the folder beside its .mrxs file">Open folder</button>
+    </div>
+    <div class="buttons view" data-part="view">
+      <label title="turns the view about its centre. Double-click to straighten">rotate <input data-part="rotation" type="range" min="-180" max="180" step="1" value="0"><span data-part="rotation-value" class="count">0°</span></label>
+      <button data-part="flip" title="mirrors the view left to right">Flip</button>
+    </div>
+    <div class="buttons" data-part="split-row">
+      <button data-part="split" title="a second pane on the right, with its own slide, view and tools">Side by side</button>
+      <button data-part="link" title="pan, zoom, rotate and flip both panes together">Link views</button>
+    </div>
+    <div class="buttons" data-part="area-buttons">
+      <button data-part="highlight" title="outline areas of interest on this slide, each in its own colour and with a name; captures show them">Highlight area</button>
+      <button data-part="capture" title="drag a rectangle over the slide to save it as a full-resolution PNG, turned and mirrored as on screen">Capture</button>
+    </div>
+    <p class="note" data-part="draw-help" hidden>Drag to outline an area, or click to place corners. Close with Enter, a double-click or a click on the first corner. Backspace undoes, Esc cancels. Two fingers pan, pinch zooms.</p>
+    <p class="note" data-part="capture-help" hidden>Drag a rectangle over the area to save it as a full-resolution PNG. Esc cancels.</p>
+    <div data-part="areas"></div>
+    <p class="note" data-part="loading" hidden></p>
+    <p class="note" data-part="drop-hint">or drop slides or folders anywhere</p>
   </div>
-  <div class="buttons" id="view">
-    <label title="turns the view about its centre. Double-click to straighten">rotate <input id="rotation" type="range" min="-180" max="180" step="1" value="0"><span id="rotation-value" class="count">0°</span></label>
-    <button id="flip" title="mirrors the view left to right">Flip</button>
+  <div class="info box" data-part="info" hidden>
+    <details data-part="metadata"><summary>Slide info</summary><table></table></details>
+    <div class="scale" data-part="scale"><div class="scale-bar" data-part="scale-bar"></div><span data-part="scale-label"></span></div>
+    <div data-part="status"></div>
   </div>
-  <div class="buttons" id="compare-row">
-    <select id="compare" aria-label="side by side with" title="a second slide on the right, panned and zoomed together"></select>
-  </div>
-  <div class="buttons" id="area-buttons">
-    <button id="highlight" title="outline areas of interest on this slide, each in its own colour and with a name; captures show them">Highlight area</button>
-    <button id="capture" title="drag a rectangle over the slide to save it as a full-resolution PNG, turned and mirrored as on screen">Capture</button>
-  </div>
-  <p id="draw-help" class="note" hidden>Drag to outline an area, or click to place corners. Close with Enter, a double-click or a click on the first corner. Backspace undoes, Esc cancels. Two fingers pan, pinch zooms.</p>
-  <p id="capture-help" class="note" hidden>Drag a rectangle over the area to save it as a full-resolution PNG. Esc cancels.</p>
-  <div id="areas"></div>
-  <input id="slide-file" type="file" accept=".tif,.tiff,.btf,.tf8,.svs,.mrxs" multiple hidden>
-  <input id="slide-folder" type="file" webkitdirectory hidden>
-  <p id="loading" class="note" hidden></p>
-  <p id="drop-hint" class="note">or drop slides or folders anywhere</p>
 </div>
-<div id="info" class="box" hidden>
-  <details id="metadata"><summary>Slide info</summary><table></table></details>
-  <div id="scale"><div id="scale-bar"></div><span id="scale-label"></span></div>
-  <div id="status"></div>
-</div>
-<div id="tabs" class="box" role="tablist" hidden></div>
+</template>
+<input id="slide-file" type="file" accept=".tif,.tiff,.btf,.tf8,.svs,.mrxs" multiple hidden>
+<input id="slide-folder" type="file" webkitdirectory hidden>
 <div id="drop" hidden><span>Drop slides or folders</span></div>
 <script src="https://cdn.jsdelivr.net/npm/openseadragon@5.0.1/build/openseadragon/openseadragon.min.js" integrity="sha384-Vh4b5HGyvDGMp6lVeYZe1zCqqyhS8oLTUC4SKIWmOuYH7nEuWiGIpSACopwLu9UD" crossorigin="anonymous"></script>
 <script src="https://cdn.jsdelivr.net/npm/geotiff@3.0.5/dist-browser/geotiff.js" integrity="sha384-QchpYxK+DqZYCChtK4SebrECTZEIQ0ahLhme9vwraN6KNxOGwtS66BG72wo1HQDN" crossorigin="anonymous"></script>
@@ -91,123 +94,6 @@
 <script>
 const $ = id => document.getElementById(id);
 const isTIFF = name => /\.(tiff?|btf|tf8|svs)$/i.test(name);
-
-const viewerOptions = {
-  prefixUrl: "https://cdn.jsdelivr.net/npm/openseadragon@5.0.1/build/openseadragon/images/",
-  drawer: "canvas",
-  maxZoomPixelRatio: 4,
-};
-const viewer = OpenSeadragon({...viewerOptions, element: $("viewer"), showNavigator: true, navigatorPosition: "BOTTOM_RIGHT"});
-const viewer2 = OpenSeadragon({...viewerOptions, element: $("viewer2")});
-
-// each pane's overlay canvas sits inside OSD's canvas container so the navigator stays on top
-const panes = [viewer, viewer2].map(paneViewer => {
-  const overlay = document.createElement("canvas");
-  overlay.style.cssText = "position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none";
-  paneViewer.canvas.appendChild(overlay);
-  return {viewer: paneViewer, ctx: overlay.getContext("2d")};
-});
-
-// the view may be turned by any angle and mirrored; OSD's coordinate conversions leave the mirroring out, so these add it
-const unmirrored = (paneViewer, position) => paneViewer.viewport.getFlip() ? new OpenSeadragon.Point(paneViewer.viewport.getContainerSize().x - position.x, position.y) : position;
-const toImage = (paneViewer, position) => paneViewer.viewport.viewerElementToImageCoordinates(unmirrored(paneViewer, position));
-const toScreen = (paneViewer, x, y) => unmirrored(paneViewer, paneViewer.viewport.imageToViewerElementCoordinates(new OpenSeadragon.Point(x, y)));
-
-// side by side, the pane under the pointer leads and the other follows it frame by frame
-let leader = viewer;
-const follow = (source, target) => {
-  target.viewport.setFlip(source.viewport.getFlip());
-  if (target.viewport.getRotation(true) !== source.viewport.getRotation(true)) target.viewport.setRotation(source.viewport.getRotation(true), true);
-  target.viewport.zoomTo(source.viewport.getZoom(true), null, true);
-  target.viewport.panTo(source.viewport.getCenter(true), true);
-};
-for (const pane of panes) {
-  const other = pane.viewer === viewer ? viewer2 : viewer;
-  pane.viewer.container.addEventListener("pointerenter", () => { leader = pane.viewer; });
-  pane.viewer.addHandler("update-viewport", () => {
-    if (compareSlide && pane.viewer === leader) follow(leader, other);
-    drawPane(pane);
-  });
-}
-viewer2.addHandler("open", () => follow(viewer, viewer2));
-
-// rotation and mirroring are view only; OSD's r, R and f keys change them too
-function setView(rotation, flip) {
-  viewer.viewport.setRotation(rotation, true);
-  viewer.viewport.setFlip(flip);
-  if (compareSlide) follow(viewer, viewer2);
-}
-const straight = degrees => ((degrees + 180) % 360 + 360) % 360 - 180;
-const showView = () => {
-  const degrees = Math.round(straight(viewer.viewport.getRotation()));
-  $("rotation").value = degrees;
-  $("rotation-value").textContent = `${degrees}°`;
-  $("flip").classList.toggle("active", viewer.viewport.getFlip());
-  renderAreas();
-};
-viewer.addHandler("rotate", showView);
-viewer.addHandler("flip", showView);
-$("rotation").addEventListener("input", () => setView(Number($("rotation").value), viewer.viewport.getFlip()));
-$("rotation").addEventListener("dblclick", () => setView(0, viewer.viewport.getFlip()));
-$("flip").addEventListener("click", () => setView(viewer.viewport.getRotation(), !viewer.viewport.getFlip()));
-viewer.addHandler("open", () => {
-  if (slide?.bounds) viewer.viewport.fitBounds(slide.bounds, true);
-  if (compareSlide) follow(viewer, viewer2);
-});
-
-// one tab per slide opened so far, each keeping its highlighted areas and view; the slides are kept in the URL hash as "slide" or "slide|compared"
-const slides = [];
-let slide = null;
-let compareSlide = null;
-function listSlides() {
-  slides.sort((a, b) => a.name.localeCompare(b.name, undefined, {numeric: true}));
-  renderTabs();
-  $("compare").replaceChildren(new Option("side by side with…", ""), ...slides.map(({name}) => new Option(name, name)));
-  $("compare").value = compareSlide?.name ?? "";
-  $("tabs").hidden = $("view").hidden = $("area-buttons").hidden = !slides.length;
-  $("compare-row").hidden = slides.length < 2;
-  $("no-slides").hidden = $("drop-hint").hidden = slides.length > 0;
-}
-listSlides();
-const setHash = (name, compareName) => { location.hash = encodeURIComponent([name, compareName].filter(Boolean).join("|")); };
-function pickSlide(name) {
-  // the compared slide follows to the same slide number, e.g. 1_norm | 1_unnorm -> 2_norm | 2_unnorm
-  const number = name.match(/^\d+/)?.[0];
-  const sameNumber = number && compareSlide?.name.replace(/^\d+/, number);
-  setHash(name, slides.some(({name}) => name === sameNumber) ? sameNumber : compareSlide?.name);
-}
-function renderTabs() {
-  $("tabs").replaceChildren(...slides.map(entry => {
-    const tab = document.createElement("div");
-    tab.className = entry === slide ? "tab active" : "tab";
-    tab.setAttribute("role", "tab");
-    tab.innerHTML = `<span></span><button title="close this slide">×</button>`;
-    const [name, close] = tab.children;
-    name.textContent = tab.title = entry.name;
-    tab.addEventListener("click", () => pickSlide(entry.name));
-    close.addEventListener("click", event => { event.stopPropagation(); closeSlide(entry); });
-    return tab;
-  }));
-  $("tabs").querySelector(".active")?.scrollIntoView({block: "nearest", inline: "nearest"});
-}
-function closeSlide(entry) {
-  const index = slides.indexOf(entry);
-  slides.splice(index, 1);
-  if (compareSlide === entry) compareSlide = null;
-  if (slide === entry) {
-    slide = null;
-    $("info").hidden = true;
-    viewer.close();
-    renderAreas();
-    draw();
-    const next = slides[Math.min(index, slides.length - 1)];
-    if (next) setHash(next.name, compareSlide?.name);
-    else { history.replaceState(null, "", location.pathname); document.title = "Slide viewer"; document.body.classList.remove("split"); $("viewer2").hidden = true; }
-  } else if (slide) setHash(slide.name, compareSlide?.name);
-  listSlides();
-}
-$("compare").addEventListener("change", () => setHash(slide.name, $("compare").value));
-window.addEventListener("hashchange", openSlide);
 
 // a TIFF on this computer, read in place: each screen tile is decoded from the finest stored level no finer than it needs.
 // Reduced levels come from OME-TIFF SubIFDs or from further images of the same shape; without them, zoomed-out views are slow
@@ -588,6 +474,7 @@ async function openMRXS(folder) {
   return {width, height, mpp, metadata, drawRegion, background, source};
 }
 
+
 // slides are listed at once, and each is read when first shown
 const slideName = file => file.name.replace(/\.[^.]+$/, "").replace(/\.ome$/i, "");
 const openEntry = entry => entry.opening ??= (entry.mrxs ? openMRXS(entry.mrxs) : openTIFF(entry.file)).then(opened => Object.assign(entry, opened));
@@ -595,303 +482,91 @@ const openEntry = entry => entry.opening ??= (entry.mrxs ? openMRXS(entry.mrxs) 
 const hasSlidedat = files => files.some(file => file.name.toLowerCase() === "slidedat.ini");
 const mrxsEntry = (name, files) => ({name, mrxs: new Map(files.map(file => [file.name.toLowerCase(), file]))});
 const handleFiles = async folder => { const files = []; for await (const entry of folder.values()) if (entry.kind === "file") files.push(await entry.getFile()); return files; };
-function addSlideFiles(files, from, mrxsEntries = []) {
-  const added = [...files.filter(file => isTIFF(file.name)).map(file => ({name: slideName(file), file})), ...mrxsEntries];
-  if (!added.length) {
-    const mrxs = files.find(file => /\.mrxs$/i.test(file.name));
-    $("loading").hidden = !from && !mrxs;
-    $("loading").textContent = mrxs ? `an MRXS slide is a folder: use Open folder on the folder holding ${mrxs.name} and its ${slideName(mrxs)} folder` : `no TIFF, SVS or MRXS slides in ${from}`;
-    return;
-  }
-  for (const entry of added) {
-    const index = slides.findIndex(({name}) => name === entry.name);  // reopening replaces
-    if (index >= 0) slides.splice(index, 1);
-    slides.push(entry);
-    if (slide?.name === entry.name) slide = null;  // so openSlide reopens it
-    if (compareSlide?.name === entry.name) compareSlide = null;
-  }
-  listSlides();
-  const [first] = added.map(({name}) => name).sort((a, b) => a.localeCompare(b, undefined, {numeric: true}));
-  setHash(first, compareSlide?.name);
-  return openSlide();
-}
-$("open-slide").addEventListener("click", () => $("slide-file").click());
-$("slide-file").addEventListener("change", () => {
-  const files = [...$("slide-file").files];
-  $("slide-file").value = "";
-  addSlideFiles(files);
-});
-// iPad browsers can pick several files but not a folder
-if (!window.showDirectoryPicker && !("webkitdirectory" in $("slide-folder"))) $("open-slide-folder").hidden = true;
-$("open-slide-folder").addEventListener("click", async () => {
-  if (!window.showDirectoryPicker) return $("slide-folder").click();
-  try {
-    const folder = await showDirectoryPicker();
-    const [files, mrxs] = [[], []];
-    for await (const entry of folder.values()) {
-      if (entry.kind === "file" && /\.(tiff?|btf|tf8|svs|mrxs)$/i.test(entry.name) || entry.name.toLowerCase() === "slidedat.ini") files.push(await entry.getFile());
-      else if (entry.kind === "directory" && await entry.getFileHandle("Slidedat.ini").then(() => true, () => false)) mrxs.push(mrxsEntry(entry.name, await handleFiles(entry)));
-    }
-    if (hasSlidedat(files)) mrxs.push(mrxsEntry(folder.name, await handleFiles(folder)));  // the MRXS folder itself was picked
-    addSlideFiles(files, folder.name, mrxs);
-  } catch (error) {
-    if (error.name !== "AbortError") $("slide-folder").click();
-  }
-});
-$("slide-folder").addEventListener("change", () => {
-  const files = [...$("slide-folder").files];
-  $("slide-folder").value = "";
-  const folderOf = file => file.webkitRelativePath.split("/").slice(0, -1).join("/");
-  const mrxs = Object.entries(Object.groupBy(files, folderOf)).filter(([, files]) => hasSlidedat(files)).map(([folder, files]) => mrxsEntry(folder.split("/").pop(), files));
-  if (files.length) addSlideFiles(files, files[0].webkitRelativePath.split("/")[0], mrxs);
-});
 
-// the slides named in the URL hash
-function hashSlides() {
-  const [name, compareName] = decodeURIComponent(location.hash.slice(1)).split("|");
-  return [slides.find(slide => slide.name === name) ?? slides[0], slides.find(slide => slide.name === compareName) ?? null];
-}
-
-async function openSlide() {
-  const [nextSlide, nextCompare] = hashSlides();
-  if (!nextSlide) return;
-  for (const entry of [nextSlide, nextCompare]) {
-    if (!entry || entry.source) continue;
-    $("loading").hidden = false;
-    $("loading").textContent = `opening ${entry.name}…`;
-    try {
-      await openEntry(entry);
-      $("loading").hidden = true;
-    } catch (error) {
-      entry.opening = null;
-      $("loading").textContent = `could not open ${entry.name}: ${error.message}`;
-      renderTabs();
-      return;
-    }
-  }
-  const [latestSlide, latestCompare] = hashSlides();
-  if (latestSlide !== nextSlide || latestCompare !== nextCompare) return;  // other slides were picked meanwhile
-  $("compare").value = nextCompare?.name ?? "";
-  document.body.classList.toggle("split", !!nextCompare);
-  $("viewer2").hidden = !nextCompare;
-  if (nextCompare && nextCompare !== compareSlide) viewer2.open(nextCompare.source);
-  compareSlide = nextCompare;
-  if (nextSlide === slide) return draw();
-
-  if (slide) Object.assign(slide, {bounds: viewer.viewport.getBounds(), rotation: viewer.viewport.getRotation(), flip: viewer.viewport.getFlip()});
-  slide = nextSlide;
-  slide.areas ??= [];
-  [draft, draftStrokes] = [[], []];
-  document.title = slide.name;
-  renderTabs();
-  renderAreas();
-  setView(slide.rotation ?? 0, slide.flip ?? false);
-  viewer.open(slide.source);
-}
-
-// drag and drop: slide files, folders of slides, or MRXS folders
-const entryFile = entry => new Promise((resolve, reject) => entry.file(resolve, reject));
-async function folderEntries(folder) {
-  const reader = folder.createReader(), entries = [];
-  for (let batch; (batch = await new Promise((resolve, reject) => reader.readEntries(resolve, reject))).length;) entries.push(...batch);
-  return entries;
-}
-const folderFiles = async folder => Promise.all((await folderEntries(folder)).filter(entry => entry.isFile).map(entryFile));
-async function mrxsFolders(folder, files) {
-  if (hasSlidedat(files)) return [mrxsEntry(folder.name, files)];
-  const found = [];
-  for (const entry of await folderEntries(folder)) {
-    if (!entry.isDirectory) continue;
-    const inner = await folderFiles(entry);
-    if (hasSlidedat(inner)) found.push(mrxsEntry(entry.name, inner));
-  }
-  return found;
-}
-window.addEventListener("dragenter", event => { if (event.dataTransfer.types.includes("Files")) $("drop").hidden = false; });
-window.addEventListener("dragover", event => event.preventDefault());
-window.addEventListener("drop", event => event.preventDefault());
-$("drop").addEventListener("dragleave", () => { $("drop").hidden = true; });
-$("drop").addEventListener("drop", async event => {
-  $("drop").hidden = true;
-  // every item must be read before the first await, after which the drop data is gone
-  const dropped = [...event.dataTransfer.items].map(item => [item.webkitGetAsEntry(), item.getAsFile()]);
-  const files = dropped.map(([, file]) => file).filter(file => file && isTIFF(file.name));
-  if (files.length) await addSlideFiles(files);
-  for (const [entry, file] of dropped.filter(([, file]) => !(file && isTIFF(file.name)))) {
-    if (entry?.isDirectory) {
-      const inner = await folderFiles(entry);
-      addSlideFiles(inner, entry.name, await mrxsFolders(entry, inner));
-    } else if (file && !dropped.some(([entry]) => entry?.isDirectory)) addSlideFiles([file], file.name);
-  }
-});
-
-// highlighting areas on the main pane: a click places a corner, a drag traces
-const AREA_COLOR = "#ffdc00";
-const CLOSE_DISTANCE = 10;  // screen px from the first corner within which a click closes the area
-const TRACE_STEP = 4;  // screen px between traced points
-let drawing = false;
-let capturing = false;
-let draft = [];  // corners of the area being drawn, in slide px
-let draftStrokes = [];  // where in draft each click or drag began, for undo
-let pressed = null;  // {position, dragged} while the pointer is down
-let pointer = null;  // pointer in slide px, for the line to the next corner
-
-const screenScale = () => { const origin = toScreen(viewer, 0, 0), alongX = toScreen(viewer, 1, 0); return Math.hypot(alongX.x - origin.x, alongX.y - origin.y); };
-const screenDistance = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]) * screenScale();
-const slidePoint = position => { const point = toImage(viewer, position); return [point.x, point.y]; };
-
-function finishDraft() {
-  const corners = draft.filter((point, i) => i === 0 || screenDistance(point, draft[i - 1]) >= 2);  // a double-click's second corner
-  [draft, draftStrokes] = [[], []];
-  if (corners.length >= 3) {
-    const number = (slide.areas.at(-1)?.number ?? 0) + 1;
-    slide.areas.push({number, name: `Highlight ${number}`, color: AREA_COLOR, ring: corners.map(([x, y]) => [Math.round(x), Math.round(y)])});
-    renderAreas();
-  }
-  draw();
-}
-
-function undo() {
-  if (draft.length) {
-    draft.length = draftStrokes.pop();
-    return draw();
-  }
-  if (!slide?.areas.length) return;
-  slide.areas.pop();
-  renderAreas();
-  draw();
-}
-
-function setToolGestures(on) {
-  for (const settings of [viewer.gestureSettingsMouse, viewer.gestureSettingsTouch, viewer.gestureSettingsPen]) settings.dragToPan = settings.clickToZoom = !on;
-  viewer.canvas.style.cursor = on ? "crosshair" : "";
-}
-function setDrawing(on) {
-  if (on && capturing) setCapturing(false);
-  if (!on && draft.length) finishDraft();
-  drawing = on;
-  setToolGestures(on);
-  $("highlight").textContent = on ? "Done" : "Highlight area";
-  $("highlight").classList.toggle("active", on);
-  $("draw-help").hidden = !on;
-}
-$("highlight").addEventListener("click", () => setDrawing(!drawing));
-
-// Capture: a rectangle dragged on the main pane, saved as soon as it is let go
-let captureDrag = null;  // {start, end} in screen px
-function setCapturing(on) {
-  if (on && drawing) setDrawing(false);
-  capturing = on;
-  captureDrag = null;
-  setToolGestures(on);
-  $("capture").textContent = on ? "Cancel" : "Capture";
-  $("capture").classList.toggle("active", on);
-  $("capture-help").hidden = !on;
-  draw();
-}
-$("capture").addEventListener("click", () => setCapturing(!capturing));
-viewer.addHandler("canvas-press", event => { if (capturing) captureDrag = {start: event.position, end: event.position}; });
-viewer.addHandler("canvas-drag", event => { if (capturing && captureDrag) { captureDrag.end = event.position; draw(); } });
-viewer.addHandler("canvas-release", event => {
-  if (!capturing || !captureDrag) return;
-  const {start} = captureDrag;
-  const [left, right] = [Math.min(start.x, event.position.x), Math.max(start.x, event.position.x)];
-  const [top, bottom] = [Math.min(start.y, event.position.y), Math.max(start.y, event.position.y)];
-  if (right - left < 4 || bottom - top < 4) return void (captureDrag = null, draw());  // a click, not a rectangle
-  const ring = [[left, top], [right, top], [right, bottom], [left, bottom]].map(([x, y]) => slidePoint(new OpenSeadragon.Point(x, y)));
-  setCapturing(false);
-  saveArea({ring});
-});
-
-viewer.addHandler("canvas-press", event => { if (drawing) pressed = {position: event.position, dragged: false}; });
-viewer.addHandler("canvas-drag", event => {
-  if (!drawing || !pressed) return;
-  if (!pressed.dragged) {
-    if (event.position.distanceTo(pressed.position) < TRACE_STEP) return;
-    pressed.dragged = true;
-    draftStrokes.push(draft.length);
-    draft.push(slidePoint(pressed.position));
-  }
-  pointer = slidePoint(event.position);
-  if (screenDistance(pointer, draft.at(-1)) >= TRACE_STEP) draft.push(pointer);
-  draw();
-});
-viewer.addHandler("canvas-release", event => {
-  if (!drawing || !pressed) return;
-  const {dragged} = pressed;
-  pressed = null;
-  if (dragged) {
-    // a single stroke is a whole outline
-    if (draftStrokes.length === 1) finishDraft();
-    return;
-  }
-  const point = slidePoint(event.position);
-  if (draft.length >= 3 && screenDistance(point, draft[0]) < CLOSE_DISTANCE) return finishDraft();
-  draftStrokes.push(draft.length);
-  draft.push(point);
-  draw();
-});
-viewer.addHandler("canvas-double-click", () => { if (drawing) finishDraft(); });
-
-window.addEventListener("keydown", event => {
-  if (capturing && event.key === "Escape") {
-    setCapturing(false);
-    return event.preventDefault();
-  }
-  if (!drawing || event.target.matches?.("input[type=text]")) return;
-  if (event.key === "Enter") finishDraft();
-  else if (event.key === "Escape") draft.length ? ([draft, draftStrokes] = [[], []], draw()) : setDrawing(false);
-  else if (event.key === "Backspace" || event.key === "Delete" || (event.key === "z" && (event.metaKey || event.ctrlKey))) undo();
-  else return;
-  event.preventDefault();
-  event.stopPropagation();
-}, true);
-
-// while drawing or capturing, a trackpad works as in map apps, since dragging draws: two fingers pan and a pinch zooms
-// (Chrome sends a pinch as ctrl+wheel, Safari as gesture events)
-const pointerPoint = event => {
-  const rect = viewer.container.getBoundingClientRect();
-  return viewer.viewport.pointFromPixel(unmirrored(viewer, new OpenSeadragon.Point(event.clientX - rect.left, event.clientY - rect.top)));
-};
-viewer.container.addEventListener("wheel", event => {
-  if (!drawing && !capturing) return;
-  event.preventDefault();
-  event.stopPropagation();
-  const unit = event.deltaMode === 1 ? 16 : 1;  // lines or px
-  if (event.ctrlKey) viewer.viewport.zoomBy(Math.exp(-event.deltaY * unit / 100), pointerPoint(event), true);
-  else viewer.viewport.panBy(viewer.viewport.deltaPointsFromPixels(new OpenSeadragon.Point((viewer.viewport.getFlip() ? -1 : 1) * event.deltaX * unit, event.deltaY * unit)), true);
-  viewer.viewport.applyConstraints();
-}, {capture: true, passive: false});
-let gestureScale = 1;
-viewer.container.addEventListener("gesturestart", event => { if (drawing || capturing) { event.preventDefault(); gestureScale = 1; } });
-viewer.container.addEventListener("gesturechange", event => {
-  if (!drawing && !capturing) return;
-  event.preventDefault();
-  viewer.viewport.zoomBy(event.scale / gestureScale, pointerPoint(event), true);
-  viewer.viewport.applyConstraints();
-  gestureScale = event.scale;
-});
-
-// an area is saved as it looks on screen: turned and mirrored as the view is, cut out along its outline, transparent outside
-const MAX_IMAGE_PIXELS = navigator.maxTouchPoints > 1 ? 16e6 : 100e6;  // what the browser's canvas holds (iPad Safari: 4096²)
-const MAX_IMAGE_SIDE = 16384;
-const IMAGE_PIECE = 2048;  // image px per side of the pieces the slide is read in
-
+// the view may be turned by any angle and mirrored; OSD's coordinate conversions leave the mirroring out, so these add it
+const unmirrored = (paneViewer, position) => paneViewer.viewport.getFlip() ? new OpenSeadragon.Point(paneViewer.viewport.getContainerSize().x - position.x, position.y) : position;
+const toImage = (paneViewer, position) => paneViewer.viewport.viewerElementToImageCoordinates(unmirrored(paneViewer, position));
+const toScreen = (paneViewer, x, y) => unmirrored(paneViewer, paneViewer.viewport.imageToViewerElementCoordinates(new OpenSeadragon.Point(x, y)));
+const straight = degrees => ((degrees + 180) % 360 + 360) % 360 - 180;
 // slide px -> screen-oriented slide px, and the box an area spans in it
-const viewTurn = () => new DOMMatrix().scaleSelf(viewer.viewport.getFlip() ? -1 : 1, 1).rotateSelf(viewer.viewport.getRotation());
+const viewTurn = paneViewer => new DOMMatrix().scaleSelf(paneViewer.viewport.getFlip() ? -1 : 1, 1).rotateSelf(paneViewer.viewport.getRotation());
 function turnedBox(ring, turn) {
   const points = ring.map(([x, y]) => turn.transformPoint({x, y}));
   const xs = points.map(point => point.x), ys = points.map(point => point.y);
   return {left: Math.min(...xs), top: Math.min(...ys), width: Math.max(...xs) - Math.min(...xs), height: Math.max(...ys) - Math.min(...ys)};
 }
-// slide px per image px: 1 (full resolution) unless the browser cannot hold the image
+
+const AREA_COLOR = "#ffdc00";
+const CLOSE_DISTANCE = 10;  // screen px from the first corner within which a click closes the area
+const TRACE_STEP = 4;  // screen px between traced points
+
+function strokeOutline(ctx, path, scale, color = AREA_COLOR) {
+  ctx.strokeStyle = "rgba(0, 0, 0, 0.7)";
+  ctx.lineWidth = 6 / scale;
+  ctx.stroke(path);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 3 / scale;
+  ctx.stroke(path);
+}
+
+// each highlight outlined in its colour, its name upright above its topmost point; `size` output px per screen px
+function drawHighlights(ctx, areas, toOutput, size) {
+  ctx.lineJoin = "round";
+  for (const area of areas) {
+    const ring = area.ring.map(([x, y]) => toOutput.transformPoint({x, y}));
+    const path = new Path2D();
+    path.moveTo(ring[0].x, ring[0].y);
+    for (const {x, y} of ring) path.lineTo(x, y);
+    path.closePath();
+    strokeOutline(ctx, path, 1 / size, area.color);
+    if (!area.name) continue;
+    const top = ring.reduce((a, b) => b.y < a.y ? b : a);
+    ctx.font = `bold ${14 * size}px system-ui, sans-serif`;
+    ctx.textAlign = "center";
+    ctx.lineWidth = 4 * size;
+    ctx.strokeStyle = "rgba(0, 0, 0, 0.8)";
+    ctx.strokeText(area.name, top.x, top.y - 8 * size);
+    ctx.fillStyle = area.color;
+    ctx.fillText(area.name, top.x, top.y - 8 * size);
+  }
+}
+
+// a round length (1, 2 or 5 × 10ⁿ µm) no longer than `longest` µm
+const roundMicrons = longest => [5, 2, 1].map(factor => factor * 10 ** Math.floor(Math.log10(longest))).find(length => length <= longest);
+const micronsText = microns => microns >= 1000 ? `${+(microns / 1000).toFixed(3)} mm` : `${+microns.toFixed(3)} µm`;
+
+// bottom-left of a capture: a scale bar of a round length, at most a quarter of its width
+function drawScaleBar(ctx, slide, width, height, downsample) {
+  if (!slide.mpp) return;
+  const size = Math.max(1, Math.max(width, height) / 1000);
+  const micronsPerPx = slide.mpp * downsample;
+  const microns = roundMicrons(0.25 * width * micronsPerPx);
+  const barWidth = microns / micronsPerPx, pad = 8 * size;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.font = `${12 * size}px system-ui, sans-serif`;
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  const label = micronsText(microns);
+  const boxWidth = 2 * pad + Math.max(barWidth, ctx.measureText(label).width), boxHeight = 2 * pad + 24 * size;
+  ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
+  ctx.fillRect(0, height - boxHeight, boxWidth, boxHeight);
+  ctx.fillStyle = "#fff";
+  ctx.fillText(label, pad, height - boxHeight + pad + 8 * size);
+  ctx.fillRect(pad, height - pad - 4 * size, barWidth, 4 * size);
+}
+
+// a capture is saved as it looks on screen: turned and mirrored as the view is, at full resolution unless the browser cannot hold it
+const MAX_IMAGE_PIXELS = navigator.maxTouchPoints > 1 ? 16e6 : 100e6;  // what the browser's canvas holds (iPad Safari: 4096²)
+const MAX_IMAGE_SIDE = 16384;
+const IMAGE_PIECE = 2048;  // image px per side of the pieces the slide is read in
 function imageDownsample({width, height}) {
   let downsample = 1;
   while (width * height / downsample ** 2 > MAX_IMAGE_PIXELS || Math.max(width, height) / downsample > MAX_IMAGE_SIDE) downsample *= 2;
   return downsample;
 }
 
-async function renderArea(area, turn, onProgress) {
+// `screenScale` (screen px per slide px) sets the highlights' line width, as on screen
+async function renderArea(slide, area, turn, screenScale, onProgress) {
   const box = turnedBox(area.ring, turn), downsample = imageDownsample(box);
   const canvas = new OffscreenCanvas(Math.max(1, Math.ceil(box.width / downsample)), Math.max(1, Math.ceil(box.height / downsample)));
   const context = canvas.getContext("2d");
@@ -925,11 +600,10 @@ async function renderArea(area, turn, onProgress) {
   }
 
   // the highlights as on screen, but never thinner than at 1 screen px per output px
-  const size = Math.max(1, 1 / (screenScale() * downsample));
   context.setTransform(1, 0, 0, 1, 0, 0);
-  drawHighlights(context, toImagePx, size);
+  drawHighlights(context, slide.areas, toImagePx, Math.max(1, 1 / (screenScale * downsample)));
   context.restore();
-  drawScaleBar(context, canvas.width, canvas.height, downsample);
+  drawScaleBar(context, slide, canvas.width, canvas.height, downsample);
   return {canvas, downsample};
 }
 
@@ -954,196 +628,579 @@ async function saveImage(suggestedName, render) {
   }
 }
 
-async function saveArea(area) {
-  const turn = viewTurn(), box = turnedBox(area.ring, turn), downsample = imageDownsample(box);
-  const [width, height] = [Math.ceil(box.width / downsample), Math.ceil(box.height / downsample)];
-  const label = "the capture";
-  if (downsample > 1 && !confirm(`${label[0].toUpperCase() + label.slice(1)} is ${Math.ceil(box.width).toLocaleString()} × ${Math.ceil(box.height).toLocaleString()} px at full resolution, more than this browser can hold in one image. Save it at 1/${downsample} resolution (${width.toLocaleString()} × ${height.toLocaleString()} px)? Or cancel and pick a smaller area.`)) return;
-  const [x, y] = [Math.round(Math.max(0, Math.min(...area.ring.map(([x]) => x)))), Math.round(Math.max(0, Math.min(...area.ring.map(([, y]) => y))))];
-  const name = `${slide.name}_x${x}_y${y}${downsample > 1 ? `_1to${downsample}` : ""}.png`;
-  const status = text => { $("loading").hidden = !text; $("loading").textContent = text; };
-  try {
-    await saveImage(name, async () => {
-      const {canvas} = await renderArea(area, turn, fraction => status(`reading ${label}: ${Math.round(fraction * 100)}%`));
-      status(`saving ${label}…`);
-      return canvas.convertToBlob({type: "image/png"});
-    });
-    status("");
-  } catch (error) {
-    status(`could not save ${label}: ${error.message}`);
+// the info box opens as it was last left, or open on wide screens
+const infoOpen = () => { try { return (localStorage.getItem("slide-info-open") ?? String(innerWidth >= 700)) === "true"; } catch { return innerWidth >= 700; } };
+
+// one tab per slide opened so far; each pane shows one of them with its own view, tools and info, and the second pane only side by side
+const slides = [];
+const panes = [];
+let split = false;
+let linked = false;  // side by side, the pane under the pointer leads and the other follows it frame by frame
+let activePane = null;  // the pane last pointed at: it leads linked views, and opened or dropped slides go to it
+const follow = (source, target) => {
+  target.viewport.setFlip(source.viewport.getFlip());
+  if (target.viewport.getRotation(true) !== source.viewport.getRotation(true)) target.viewport.setRotation(source.viewport.getRotation(true), true);
+  target.viewport.zoomTo(source.viewport.getZoom(true), null, true);
+  target.viewport.panTo(source.viewport.getCenter(true), true);
+};
+const otherPane = pane => panes.find(other => other !== pane);
+const linkedTo = pane => linked && split ? otherPane(pane) : null;
+
+function createPane(index) {
+  const root = $("pane-template").content.firstElementChild.cloneNode(true);
+  const part = name => root.querySelector(`[data-part="${name}"]`);
+  if (index === 0) for (const element of root.querySelectorAll("[data-part]")) element.id = element.dataset.part;
+  $("panes").append(root);
+  const viewer = OpenSeadragon({prefixUrl: "https://cdn.jsdelivr.net/npm/openseadragon@5.0.1/build/openseadragon/images/", drawer: "canvas", maxZoomPixelRatio: 4, element: part("viewer"), showNavigator: true, navigatorPosition: "BOTTOM_RIGHT"});
+  // the overlay canvas sits inside OSD's canvas container so the navigator stays on top
+  const overlay = document.createElement("canvas");
+  overlay.style.cssText = "position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none";
+  viewer.canvas.appendChild(overlay);
+  const ctx = overlay.getContext("2d");
+
+  let slide = null;
+  let wanted = null;  // the slide last picked, which may still be opening
+  const views = new Map();  // slide -> {bounds, rotation, flip} when it was last left in this pane
+  const pane = {
+    index, root, viewer,
+    get slide() { return slide; },
+    get busy() { return drawing || capturing; },
+    show, close, renderTabs, renderControls, renderAreas, draw, setLoading, key, setDrawing, setCapturing,
+  };
+  root.addEventListener("pointerenter", () => { activePane = pane; });
+  root.addEventListener("pointerdown", () => { activePane = pane; });
+
+  function setLoading(text) {
+    part("loading").hidden = !text;
+    part("loading").textContent = text;
   }
-}
 
-// fit the area on screen, as the view is turned
-function goToArea(area) {
-  const box = turnedBox(area.ring, viewTurn());
-  const {x: width, y: height} = viewer.viewport.getContainerSize();
-  const scale = 0.85 * Math.min(width / box.width, height / box.height);  // screen px per slide px
-  const xs = area.ring.map(([x]) => x), ys = area.ring.map(([, y]) => y);
-  const centre = viewer.viewport.imageToViewportCoordinates((Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...ys) + Math.max(...ys)) / 2);
-  viewer.viewport.zoomTo(viewer.viewport.imageToViewportZoom(scale));
-  viewer.viewport.panTo(centre);
-}
-
-function renderAreas() {
-  const areas = slide?.areas ?? [];
-  $("areas").replaceChildren(...areas.map(area => {
-    const row = document.createElement("div");
-    row.className = "area";
-    row.innerHTML = `<input type="color" title="colour of this highlight"><input type="text" title="name of this highlight, shown by it" spellcheck="false"><button title="show this highlight">◎</button><button title="remove this highlight">×</button>`;
-    const [color, name, show, remove] = row.children;
-    [color.value, name.value] = [area.color, area.name];
-    color.addEventListener("input", () => { area.color = color.value; draw(); });
-    name.addEventListener("input", () => { area.name = name.value; draw(); });
-    name.addEventListener("keydown", event => { if (event.key === "Enter" || event.key === "Escape") name.blur(); });
-    show.addEventListener("click", () => goToArea(area));
-    remove.addEventListener("click", () => { slide.areas.splice(slide.areas.indexOf(area), 1); renderAreas(); draw(); });
-    return row;
-  }));
-}
-
-let cursorText = "";
-let zoomText = "";
-
-const draw = () => panes.forEach(drawPane);
-
-// the areas are drawn on both panes, since compared slides share the slide px frame
-function strokeOutline(ctx, path, scale, color = AREA_COLOR) {
-  ctx.strokeStyle = "rgba(0, 0, 0, 0.7)";
-  ctx.lineWidth = 6 / scale;
-  ctx.stroke(path);
-  ctx.strokeStyle = color;
-  ctx.lineWidth = 3 / scale;
-  ctx.stroke(path);
-}
-
-// each highlight outlined in its colour, its name upright above its topmost point; `size` output px per screen px
-function drawHighlights(ctx, toOutput, size) {
-  ctx.lineJoin = "round";
-  for (const area of slide.areas) {
-    const ring = area.ring.map(([x, y]) => toOutput.transformPoint({x, y}));
-    const path = new Path2D();
-    path.moveTo(ring[0].x, ring[0].y);
-    for (const {x, y} of ring) path.lineTo(x, y);
-    path.closePath();
-    strokeOutline(ctx, path, 1 / size, area.color);
-    if (!area.name) continue;
-    const top = ring.reduce((a, b) => b.y < a.y ? b : a);
-    ctx.font = `bold ${14 * size}px system-ui, sans-serif`;
-    ctx.textAlign = "center";
-    ctx.lineWidth = 4 * size;
-    ctx.strokeStyle = "rgba(0, 0, 0, 0.8)";
-    ctx.strokeText(area.name, top.x, top.y - 8 * size);
-    ctx.fillStyle = area.color;
-    ctx.fillText(area.name, top.x, top.y - 8 * size);
+  async function show(entry) {
+    wanted = entry;
+    if (!entry) return;
+    if (!entry.source) {
+      setLoading(`opening ${entry.name}…`);
+      try {
+        await openEntry(entry);
+        setLoading("");
+      } catch (error) {
+        entry.opening = null;
+        setLoading(`could not open ${entry.name}: ${error.message}`);
+        return renderTabs();
+      }
+    }
+    if (wanted !== entry) return;  // another slide was picked meanwhile
+    if (entry === slide) return draw();
+    if (slide) views.set(slide, {bounds: viewer.viewport.getBounds(), rotation: viewer.viewport.getRotation(), flip: viewer.viewport.getFlip()});
+    slide = entry;
+    slide.areas ??= [];
+    [draft, draftStrokes] = [[], []];
+    if (index === 0) document.title = slide.name;
+    renderTabs();
+    renderAreas();
+    const view = views.get(slide);
+    if (!linkedTo(pane)?.slide) setView(view?.rotation ?? 0, view?.flip ?? false);
+    viewer.open(slide.source);
   }
-}
+  viewer.addHandler("open", () => {
+    const leader = linkedTo(pane);
+    if (leader?.slide) follow(leader.viewer, viewer);
+    else if (views.get(slide)) viewer.viewport.fitBounds(views.get(slide).bounds, true);
+  });
 
-// a round length (1, 2 or 5 × 10ⁿ µm) no longer than `longest` µm
-const roundMicrons = longest => [5, 2, 1].map(factor => factor * 10 ** Math.floor(Math.log10(longest))).find(length => length <= longest);
-const micronsText = microns => microns >= 1000 ? `${+(microns / 1000).toFixed(3)} mm` : `${+microns.toFixed(3)} µm`;
+  // a closed slide is forgotten; the pane moves on to `next`, or empties
+  function close(entry, next) {
+    views.delete(entry);
+    if (slide !== entry) return renderTabs();
+    slide = wanted = null;
+    [draft, draftStrokes] = [[], []];
+    part("info").hidden = true;
+    viewer.close();
+    if (index === 0) document.title = "Slide viewer";
+    renderAreas();
+    draw();
+    renderTabs();
+    show(next);
+  }
 
-// bottom-left of a capture: a scale bar of a round length, at most a quarter of its width
-function drawScaleBar(ctx, width, height, downsample) {
-  if (!slide.mpp) return;
-  const size = Math.max(1, Math.max(width, height) / 1000);
-  const micronsPerPx = slide.mpp * downsample;
-  const microns = roundMicrons(0.25 * width * micronsPerPx);
-  const barWidth = microns / micronsPerPx, pad = 8 * size;
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.font = `${12 * size}px system-ui, sans-serif`;
-  ctx.textAlign = "left";
-  ctx.textBaseline = "middle";
-  const label = micronsText(microns);
-  const boxWidth = 2 * pad + Math.max(barWidth, ctx.measureText(label).width), boxHeight = 2 * pad + 24 * size;
-  ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
-  ctx.fillRect(0, height - boxHeight, boxWidth, boxHeight);
-  ctx.fillStyle = "#fff";
-  ctx.fillText(label, pad, height - boxHeight + pad + 8 * size);
-  ctx.fillRect(pad, height - pad - 4 * size, barWidth, 4 * size);
-}
-// the slide's metadata, and a scale bar of a round length (1, 2 or 5 × 10ⁿ µm) at most 120 screen px long
-let infoSlide = null;
-function renderInfo(scale) {
-  $("info").hidden = false;
-  if (infoSlide !== slide) {
-    infoSlide = slide;
-    $("metadata").querySelector("table").replaceChildren(...slide.metadata.map(row => {
-      const tr = document.createElement("tr");
-      tr.append(...row.map(text => Object.assign(document.createElement("td"), {textContent: text})));
-      return tr;
+  function renderTabs() {
+    part("tabs").replaceChildren(...slides.map(entry => {
+      const tab = document.createElement("div");
+      tab.className = entry === slide ? "tab active" : "tab";
+      tab.setAttribute("role", "tab");
+      tab.innerHTML = `<span></span><button title="close this slide">×</button>`;
+      const [name, closeButton] = tab.children;
+      name.textContent = tab.title = entry.name;
+      tab.addEventListener("click", () => pickSlide(pane, entry));
+      closeButton.addEventListener("click", event => { event.stopPropagation(); closeSlide(entry); });
+      return tab;
+    }));
+    part("tabs").querySelector(".active")?.scrollIntoView({block: "nearest", inline: "nearest"});
+  }
+
+  function renderControls() {
+    part("tabs").hidden = part("view").hidden = part("area-buttons").hidden = !slides.length;
+    part("no-slides").hidden = part("drop-hint").hidden = slides.length > 0;
+    part("split-row").hidden = !slides.length;
+    part("split").hidden = index > 0;
+    part("split").classList.toggle("active", split);
+    part("link").hidden = !split;
+    part("link").classList.toggle("active", linked);
+  }
+  part("split").addEventListener("click", () => setSplit(!split));
+  part("link").addEventListener("click", () => setLinked(!linked, pane));
+  part("open-slide").addEventListener("click", () => { activePane = pane; $("slide-file").click(); });
+  part("open-slide-folder").addEventListener("click", () => { activePane = pane; openFolder(); });
+  // iPad browsers can pick several files but not a folder
+  if (!window.showDirectoryPicker && !("webkitdirectory" in $("slide-folder"))) part("open-slide-folder").hidden = true;
+
+  // rotation and mirroring are view only; OSD's r, R and f keys change them too
+  function setView(rotation, flip) {
+    viewer.viewport.setRotation(rotation, true);
+    viewer.viewport.setFlip(flip);
+    if (linkedTo(pane)) follow(viewer, linkedTo(pane).viewer);
+  }
+  const showView = () => {
+    const degrees = Math.round(straight(viewer.viewport.getRotation()));
+    part("rotation").value = degrees;
+    part("rotation-value").textContent = `${degrees}°`;
+    part("flip").classList.toggle("active", viewer.viewport.getFlip());
+  };
+  viewer.addHandler("rotate", showView);
+  viewer.addHandler("flip", showView);
+  part("rotation").addEventListener("input", () => setView(Number(part("rotation").value), viewer.viewport.getFlip()));
+  part("rotation").addEventListener("dblclick", () => setView(0, viewer.viewport.getFlip()));
+  part("flip").addEventListener("click", () => setView(viewer.viewport.getRotation(), !viewer.viewport.getFlip()));
+  viewer.addHandler("update-viewport", () => {
+    if (activePane === pane && linkedTo(pane)) follow(viewer, linkedTo(pane).viewer);
+    draw();
+  });
+
+  // highlighting areas: a click places a corner, a drag traces
+  let drawing = false;
+  let capturing = false;
+  let draft = [];  // corners of the area being drawn, in slide px
+  let draftStrokes = [];  // where in draft each click or drag began, for undo
+  let pressed = null;  // {position, dragged} while the pointer is down
+  let pointer = null;  // pointer in slide px, for the line to the next corner
+  let captureDrag = null;  // {start, end} in screen px
+
+  const screenScale = () => { const origin = toScreen(viewer, 0, 0), alongX = toScreen(viewer, 1, 0); return Math.hypot(alongX.x - origin.x, alongX.y - origin.y); };
+  const screenDistance = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]) * screenScale();
+  const slidePoint = position => { const point = toImage(viewer, position); return [point.x, point.y]; };
+
+  function finishDraft() {
+    const corners = draft.filter((point, i) => i === 0 || screenDistance(point, draft[i - 1]) >= 2);  // a double-click's second corner
+    [draft, draftStrokes] = [[], []];
+    if (corners.length >= 3) {
+      const number = (slide.areas.at(-1)?.number ?? 0) + 1;
+      slide.areas.push({number, name: `Highlight ${number}`, color: AREA_COLOR, ring: corners.map(([x, y]) => [Math.round(x), Math.round(y)])});
+      areasChanged(slide);
+    }
+    draw();
+  }
+
+  function undo() {
+    if (draft.length) {
+      draft.length = draftStrokes.pop();
+      return draw();
+    }
+    if (!slide?.areas.length) return;
+    slide.areas.pop();
+    areasChanged(slide);
+  }
+
+  function setToolGestures(on) {
+    for (const settings of [viewer.gestureSettingsMouse, viewer.gestureSettingsTouch, viewer.gestureSettingsPen]) settings.dragToPan = settings.clickToZoom = !on;
+    viewer.canvas.style.cursor = on ? "crosshair" : "";
+  }
+  function setDrawing(on) {
+    if (on && capturing) setCapturing(false);
+    if (!on && draft.length) finishDraft();
+    drawing = on;
+    setToolGestures(on || capturing);
+    part("highlight").textContent = on ? "Done" : "Highlight area";
+    part("highlight").classList.toggle("active", on);
+    part("draw-help").hidden = !on;
+  }
+  part("highlight").addEventListener("click", () => setDrawing(!drawing));
+
+  // Capture: a rectangle dragged over the slide, saved as soon as it is let go
+  function setCapturing(on) {
+    if (on && drawing) setDrawing(false);
+    capturing = on;
+    captureDrag = null;
+    setToolGestures(on || drawing);
+    part("capture").textContent = on ? "Cancel" : "Capture";
+    part("capture").classList.toggle("active", on);
+    part("capture-help").hidden = !on;
+    draw();
+  }
+  part("capture").addEventListener("click", () => setCapturing(!capturing));
+  viewer.addHandler("canvas-press", event => { if (capturing) captureDrag = {start: event.position, end: event.position}; });
+  viewer.addHandler("canvas-drag", event => { if (capturing && captureDrag) { captureDrag.end = event.position; draw(); } });
+  viewer.addHandler("canvas-release", event => {
+    if (!capturing || !captureDrag) return;
+    const {start} = captureDrag;
+    const [left, right] = [Math.min(start.x, event.position.x), Math.max(start.x, event.position.x)];
+    const [top, bottom] = [Math.min(start.y, event.position.y), Math.max(start.y, event.position.y)];
+    if (right - left < 4 || bottom - top < 4) return void (captureDrag = null, draw());  // a click, not a rectangle
+    const ring = [[left, top], [right, top], [right, bottom], [left, bottom]].map(([x, y]) => slidePoint(new OpenSeadragon.Point(x, y)));
+    setCapturing(false);
+    saveArea({ring});
+  });
+
+  viewer.addHandler("canvas-press", event => { if (drawing) pressed = {position: event.position, dragged: false}; });
+  viewer.addHandler("canvas-drag", event => {
+    if (!drawing || !pressed) return;
+    if (!pressed.dragged) {
+      if (event.position.distanceTo(pressed.position) < TRACE_STEP) return;
+      pressed.dragged = true;
+      draftStrokes.push(draft.length);
+      draft.push(slidePoint(pressed.position));
+    }
+    pointer = slidePoint(event.position);
+    if (screenDistance(pointer, draft.at(-1)) >= TRACE_STEP) draft.push(pointer);
+    draw();
+  });
+  viewer.addHandler("canvas-release", event => {
+    if (!drawing || !pressed) return;
+    const {dragged} = pressed;
+    pressed = null;
+    if (dragged) {
+      // a single stroke is a whole outline
+      if (draftStrokes.length === 1) finishDraft();
+      return;
+    }
+    const point = slidePoint(event.position);
+    if (draft.length >= 3 && screenDistance(point, draft[0]) < CLOSE_DISTANCE) return finishDraft();
+    draftStrokes.push(draft.length);
+    draft.push(point);
+    draw();
+  });
+  viewer.addHandler("canvas-double-click", () => { if (drawing) finishDraft(); });
+
+  // the tools' keys; false when the key is not theirs
+  function key(event) {
+    if (capturing && event.key === "Escape") setCapturing(false);
+    else if (!drawing) return false;
+    else if (event.key === "Enter") finishDraft();
+    else if (event.key === "Escape") draft.length ? ([draft, draftStrokes] = [[], []], draw()) : setDrawing(false);
+    else if (event.key === "Backspace" || event.key === "Delete" || (event.key === "z" && (event.metaKey || event.ctrlKey))) undo();
+    else return false;
+    return true;
+  }
+
+  // while drawing or capturing, a trackpad works as in map apps, since dragging draws: two fingers pan and a pinch zooms
+  // (Chrome sends a pinch as ctrl+wheel, Safari as gesture events)
+  const pointerPoint = event => {
+    const rect = viewer.container.getBoundingClientRect();
+    return viewer.viewport.pointFromPixel(unmirrored(viewer, new OpenSeadragon.Point(event.clientX - rect.left, event.clientY - rect.top)));
+  };
+  viewer.container.addEventListener("wheel", event => {
+    if (!drawing && !capturing) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const unit = event.deltaMode === 1 ? 16 : 1;  // lines or px
+    if (event.ctrlKey) viewer.viewport.zoomBy(Math.exp(-event.deltaY * unit / 100), pointerPoint(event), true);
+    else viewer.viewport.panBy(viewer.viewport.deltaPointsFromPixels(new OpenSeadragon.Point((viewer.viewport.getFlip() ? -1 : 1) * event.deltaX * unit, event.deltaY * unit)), true);
+    viewer.viewport.applyConstraints();
+  }, {capture: true, passive: false});
+  let gestureScale = 1;
+  viewer.container.addEventListener("gesturestart", event => { if (drawing || capturing) { event.preventDefault(); gestureScale = 1; } });
+  viewer.container.addEventListener("gesturechange", event => {
+    if (!drawing && !capturing) return;
+    event.preventDefault();
+    viewer.viewport.zoomBy(event.scale / gestureScale, pointerPoint(event), true);
+    viewer.viewport.applyConstraints();
+    gestureScale = event.scale;
+  });
+
+  async function saveArea(area) {
+    const turn = viewTurn(viewer), box = turnedBox(area.ring, turn), downsample = imageDownsample(box);
+    const [width, height] = [Math.ceil(box.width / downsample), Math.ceil(box.height / downsample)];
+    if (downsample > 1 && !confirm(`The capture is ${Math.ceil(box.width).toLocaleString()} × ${Math.ceil(box.height).toLocaleString()} px at full resolution, more than this browser can hold in one image. Save it at 1/${downsample} resolution (${width.toLocaleString()} × ${height.toLocaleString()} px)? Or cancel and pick a smaller area.`)) return;
+    const [x, y] = [Math.round(Math.max(0, Math.min(...area.ring.map(([x]) => x)))), Math.round(Math.max(0, Math.min(...area.ring.map(([, y]) => y))))];
+    const name = `${slide.name}_x${x}_y${y}${downsample > 1 ? `_1to${downsample}` : ""}.png`;
+    const captured = slide, scale = screenScale();
+    try {
+      await saveImage(name, async () => {
+        const {canvas} = await renderArea(captured, area, turn, scale, fraction => setLoading(`reading the capture: ${Math.round(fraction * 100)}%`));
+        setLoading("saving the capture…");
+        return canvas.convertToBlob({type: "image/png"});
+      });
+      setLoading("");
+    } catch (error) {
+      setLoading(`could not save the capture: ${error.message}`);
+    }
+  }
+
+  // fit the area on screen, as the view is turned
+  function goToArea(area) {
+    const box = turnedBox(area.ring, viewTurn(viewer));
+    const {x: width, y: height} = viewer.viewport.getContainerSize();
+    const scale = 0.85 * Math.min(width / box.width, height / box.height);  // screen px per slide px
+    const xs = area.ring.map(([x]) => x), ys = area.ring.map(([, y]) => y);
+    const centre = viewer.viewport.imageToViewportCoordinates((Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...ys) + Math.max(...ys)) / 2);
+    viewer.viewport.zoomTo(viewer.viewport.imageToViewportZoom(scale));
+    viewer.viewport.panTo(centre);
+  }
+
+  function renderAreas() {
+    part("areas").replaceChildren(...(slide?.areas ?? []).map(area => {
+      const row = document.createElement("div");
+      row.className = "area";
+      row.innerHTML = `<input type="color" title="colour of this highlight"><input type="text" title="name of this highlight, shown by it" spellcheck="false"><button title="show this highlight">◎</button><button title="remove this highlight">×</button>`;
+      const [color, name, showButton, remove] = row.children;
+      [color.value, name.value] = [area.color, area.name];
+      color.addEventListener("input", () => { area.color = color.value; areasChanged(slide, pane); });
+      name.addEventListener("input", () => { area.name = name.value; areasChanged(slide, pane); });
+      name.addEventListener("keydown", event => { if (event.key === "Enter" || event.key === "Escape") name.blur(); });
+      showButton.addEventListener("click", () => goToArea(area));
+      remove.addEventListener("click", () => { slide.areas.splice(slide.areas.indexOf(area), 1); areasChanged(slide); });
+      return row;
     }));
   }
-  $("scale").hidden = !slide.mpp;
-  if (!slide.mpp) return;
-  const micronsPerScreenPx = slide.mpp / scale;
-  const microns = roundMicrons(120 * micronsPerScreenPx);
-  $("scale-bar").style.width = `${microns / micronsPerScreenPx}px`;
-  $("scale-label").textContent = micronsText(microns);
-}
-// the info box opens as it was last left, or open on wide screens
-try { $("metadata").open = (localStorage.getItem("slide-info-open") ?? String(innerWidth >= 700)) === "true"; } catch { $("metadata").open = innerWidth >= 700; }
-$("metadata").addEventListener("toggle", () => { try { localStorage.setItem("slide-info-open", $("metadata").open); } catch {} });
 
-function drawPane(pane) {
-  const {viewer, ctx} = pane;
-  const overlay = ctx.canvas;
-  const dpr = window.devicePixelRatio || 1;
-  const width = viewer.canvas.clientWidth, height = viewer.canvas.clientHeight;
-  if (overlay.width !== width * dpr || overlay.height !== height * dpr) [overlay.width, overlay.height] = [width * dpr, height * dpr];
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.clearRect(0, 0, overlay.width, overlay.height);
-  if (!slide || !width || !viewer.world.getItemCount()) return;
-
-  // slide px -> device px
-  const origin = toScreen(viewer, 0, 0), alongX = toScreen(viewer, 1, 0), alongY = toScreen(viewer, 0, 1);
-  const scale = Math.hypot(alongX.x - origin.x, alongX.y - origin.y);
-  const toDevice = new DOMMatrix([(alongX.x - origin.x) * dpr, (alongX.y - origin.y) * dpr, (alongY.x - origin.x) * dpr, (alongY.y - origin.y) * dpr, origin.x * dpr, origin.y * dpr]);
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  drawHighlights(ctx, toDevice, dpr);
-  if (viewer !== panes[0].viewer) return;
-
-  // the area being drawn, with a line to the pointer and its first corner filled when a click would close it
-  ctx.setTransform(toDevice);
-  if (draft.length) {
-    const path = new Path2D();
-    path.moveTo(...draft[0]);
-    for (const point of draft) path.lineTo(...point);
-    if (pointer && !pressed?.dragged) path.lineTo(...pointer);
-    strokeOutline(ctx, path, scale);
-    const closes = draft.length >= 3 && pointer && screenDistance(pointer, draft[0]) < CLOSE_DISTANCE;
-    ctx.beginPath();
-    ctx.arc(...draft[0], (closes ? 7 : 5) / scale, 0, 2 * Math.PI);
-    ctx.fillStyle = closes ? AREA_COLOR : "black";
-    ctx.fill();
-    ctx.stroke();
-  }
-  if (captureDrag) {
-    const {start, end} = captureDrag;
-    const path = new Path2D();
-    path.rect(Math.min(start.x, end.x), Math.min(start.y, end.y), Math.abs(end.x - start.x), Math.abs(end.y - start.y));
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.fillStyle = "rgba(255, 255, 255, 0.12)";
-    ctx.fill(path);
-    strokeOutline(ctx, path, 1);
-  }
-  zoomText = slide.mpp ? `${(scale * 10 / slide.mpp).toFixed(1)}×` : `${scale.toFixed(2)} screen px/px`;
-  $("status").textContent = [cursorText, zoomText].filter(Boolean).join("  ·  ");
-  renderInfo(scale);
-}
-
-for (const {viewer} of panes) new OpenSeadragon.MouseTracker({
-  element: viewer.container,
-  moveHandler: event => {
-    if (!slide || !viewer.world.getItemCount()) return;
-    const point = toImage(viewer, event.position);
-    if (drawing && viewer === panes[0].viewer) {
-      pointer = [point.x, point.y];
-      if (draft.length) draw();
+  // the slide's metadata, and a scale bar of a round length at most 120 screen px long
+  let infoSlide = null;
+  part("metadata").open = infoOpen();
+  part("metadata").addEventListener("toggle", () => { try { localStorage.setItem("slide-info-open", part("metadata").open); } catch {} });
+  function renderInfo(scale) {
+    part("info").hidden = false;
+    if (infoSlide !== slide) {
+      infoSlide = slide;
+      part("metadata").querySelector("table").replaceChildren(...slide.metadata.map(row => {
+        const tr = document.createElement("tr");
+        tr.append(...row.map(text => Object.assign(document.createElement("td"), {textContent: text})));
+        return tr;
+      }));
     }
-    cursorText = `x ${Math.round(point.x)}  y ${Math.round(point.y)} px`;
-    $("status").textContent = [cursorText, zoomText].join("  ·  ");
-  },
+    part("scale").hidden = !slide.mpp;
+    if (!slide.mpp) return;
+    const micronsPerScreenPx = slide.mpp / scale;
+    const microns = roundMicrons(120 * micronsPerScreenPx);
+    part("scale-bar").style.width = `${microns / micronsPerScreenPx}px`;
+    part("scale-label").textContent = micronsText(microns);
+  }
+
+  let cursorText = "";
+  let zoomText = "";
+  const showStatus = () => { part("status").textContent = [cursorText, zoomText].filter(Boolean).join("  ·  "); };
+  function draw() {
+    const dpr = window.devicePixelRatio || 1;
+    const width = viewer.canvas.clientWidth, height = viewer.canvas.clientHeight;
+    if (overlay.width !== width * dpr || overlay.height !== height * dpr) [overlay.width, overlay.height] = [width * dpr, height * dpr];
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, overlay.width, overlay.height);
+    if (!slide || !width || !viewer.world.getItemCount()) return;
+
+    // slide px -> device px
+    const origin = toScreen(viewer, 0, 0), alongX = toScreen(viewer, 1, 0), alongY = toScreen(viewer, 0, 1);
+    const scale = Math.hypot(alongX.x - origin.x, alongX.y - origin.y);
+    const toDevice = new DOMMatrix([(alongX.x - origin.x) * dpr, (alongX.y - origin.y) * dpr, (alongY.x - origin.x) * dpr, (alongY.y - origin.y) * dpr, origin.x * dpr, origin.y * dpr]);
+    drawHighlights(ctx, slide.areas, toDevice, dpr);
+
+    // the area being drawn, with a line to the pointer and its first corner filled when a click would close it
+    ctx.setTransform(toDevice);
+    if (draft.length) {
+      const path = new Path2D();
+      path.moveTo(...draft[0]);
+      for (const point of draft) path.lineTo(...point);
+      if (pointer && !pressed?.dragged) path.lineTo(...pointer);
+      strokeOutline(ctx, path, scale);
+      const closes = draft.length >= 3 && pointer && screenDistance(pointer, draft[0]) < CLOSE_DISTANCE;
+      ctx.beginPath();
+      ctx.arc(...draft[0], (closes ? 7 : 5) / scale, 0, 2 * Math.PI);
+      ctx.fillStyle = closes ? AREA_COLOR : "black";
+      ctx.fill();
+      ctx.stroke();
+    }
+    if (captureDrag) {
+      const {start, end} = captureDrag;
+      const path = new Path2D();
+      path.rect(Math.min(start.x, end.x), Math.min(start.y, end.y), Math.abs(end.x - start.x), Math.abs(end.y - start.y));
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.fillStyle = "rgba(255, 255, 255, 0.12)";
+      ctx.fill(path);
+      strokeOutline(ctx, path, 1);
+    }
+    zoomText = slide.mpp ? `${(scale * 10 / slide.mpp).toFixed(1)}×` : `${scale.toFixed(2)} screen px/px`;
+    showStatus();
+    renderInfo(scale);
+  }
+
+  new OpenSeadragon.MouseTracker({
+    element: viewer.container,
+    moveHandler: event => {
+      if (!slide || !viewer.world.getItemCount()) return;
+      const point = toImage(viewer, event.position);
+      if (drawing) {
+        pointer = [point.x, point.y];
+        if (draft.length) draw();
+      }
+      cursorText = `x ${Math.round(point.x)}  y ${Math.round(point.y)} px`;
+      showStatus();
+    },
+  });
+
+  renderControls();
+  return pane;
+}
+
+panes.push(createPane(0), createPane(1));
+panes[1].root.hidden = true;
+activePane = panes[0];
+// the first pane under the annotator's names, so both pages can be scripted alike
+Object.defineProperties(window, {viewer: {get: () => panes[0].viewer}, slide: {get: () => panes[0].slide}});
+
+// a slide's highlights changed: every pane showing it redraws, and its list is rebuilt except in `typing`, whose inputs keep focus
+function areasChanged(entry, typing = null) {
+  for (const pane of panes.filter(pane => pane.slide === entry)) {
+    if (pane !== typing) pane.renderAreas();
+    pane.draw();
+  }
+}
+
+function setSplit(on) {
+  split = on;
+  document.body.classList.toggle("split", on);
+  panes[1].root.hidden = !on;
+  if (!on) {
+    panes[1].setDrawing(false);
+    panes[1].setCapturing(false);
+    activePane = panes[0];
+  }
+  panes.forEach(pane => pane.renderControls());
+  // the second pane starts on the first one's counterpart (1_norm -> 1_unnorm), else on the next slide
+  if (on && !panes[1].slide) panes[1].show(counterpart(panes[0].slide, panes[0].slide));
+}
+function counterpart(entry, of) {
+  const number = of?.name.match(/^\d+/)?.[0];
+  const sameNumber = slides.find(other => other !== of && other.name.match(/^\d+/)?.[0] === number);
+  return number && sameNumber ? sameNumber : slides[(slides.indexOf(entry) + 1) % slides.length] ?? entry;
+}
+function setLinked(on, leader) {
+  linked = on;
+  panes.forEach(pane => pane.renderControls());
+  if (on && otherPane(leader).slide) follow(leader.viewer, otherPane(leader).viewer);
+}
+
+// linked, the other pane follows to the same slide number, e.g. 1_norm | 1_unnorm -> 2_norm | 2_unnorm
+function pickSlide(pane, entry) {
+  const other = linkedTo(pane), number = entry.name.match(/^\d+/)?.[0];
+  const sameNumber = number && other?.slide && slides.find(({name}) => name === other.slide.name.replace(/^\d+/, number));
+  pane.show(entry);
+  if (sameNumber) other.show(sameNumber);
+}
+
+function listSlides() {
+  slides.sort((a, b) => a.name.localeCompare(b.name, undefined, {numeric: true}));
+  for (const pane of panes) {
+    pane.renderTabs();
+    pane.renderControls();
+  }
+}
+function closeSlide(entry) {
+  const index = slides.indexOf(entry);
+  slides.splice(index, 1);
+  const next = slides[Math.min(index, slides.length - 1)];
+  if (!slides.length) setSplit(false);
+  for (const pane of panes) pane.close(entry, next);
+  listSlides();
+}
+
+function addSlideFiles(files, from, mrxsEntries = [], pane = activePane) {
+  const added = [...files.filter(file => isTIFF(file.name)).map(file => ({name: slideName(file), file})), ...mrxsEntries];
+  if (!added.length) {
+    const mrxs = files.find(file => /\.mrxs$/i.test(file.name));
+    pane.setLoading(from || mrxs ? (mrxs ? `an MRXS slide is a folder: use Open folder on the folder holding ${mrxs.name} and its ${slideName(mrxs)} folder` : `no TIFF, SVS or MRXS slides in ${from}`) : "");
+    return;
+  }
+  for (const entry of added) {
+    const index = slides.findIndex(({name}) => name === entry.name);  // reopening replaces
+    if (index >= 0) {
+      const replaced = slides.splice(index, 1, entry)[0];
+      for (const other of panes) if (other.slide === replaced) other.close(replaced, entry);
+    } else slides.push(entry);
+  }
+  listSlides();
+  const [first] = added.map(({name}) => name).sort((a, b) => a.localeCompare(b, undefined, {numeric: true}));
+  return pane.show(slides.find(({name}) => name === first));
+}
+$("slide-file").addEventListener("change", () => {
+  const files = [...$("slide-file").files];
+  $("slide-file").value = "";
+  addSlideFiles(files);
+});
+async function openFolder() {
+  if (!window.showDirectoryPicker) return $("slide-folder").click();
+  try {
+    const folder = await showDirectoryPicker();
+    const [files, mrxs] = [[], []];
+    for await (const entry of folder.values()) {
+      if (entry.kind === "file" && /\.(tiff?|btf|tf8|svs|mrxs)$/i.test(entry.name) || entry.name.toLowerCase() === "slidedat.ini") files.push(await entry.getFile());
+      else if (entry.kind === "directory" && await entry.getFileHandle("Slidedat.ini").then(() => true, () => false)) mrxs.push(mrxsEntry(entry.name, await handleFiles(entry)));
+    }
+    if (hasSlidedat(files)) mrxs.push(mrxsEntry(folder.name, await handleFiles(folder)));  // the MRXS folder itself was picked
+    addSlideFiles(files, folder.name, mrxs);
+  } catch (error) {
+    if (error.name !== "AbortError") $("slide-folder").click();
+  }
+}
+$("slide-folder").addEventListener("change", () => {
+  const files = [...$("slide-folder").files];
+  $("slide-folder").value = "";
+  const folderOf = file => file.webkitRelativePath.split("/").slice(0, -1).join("/");
+  const mrxs = Object.entries(Object.groupBy(files, folderOf)).filter(([, files]) => hasSlidedat(files)).map(([folder, files]) => mrxsEntry(folder.split("/").pop(), files));
+  if (files.length) addSlideFiles(files, files[0].webkitRelativePath.split("/")[0], mrxs);
+});
+
+// keys go to the pane with a tool on, the one last pointed at first; typing in a name is left alone
+window.addEventListener("keydown", event => {
+  if (event.target.matches?.("input[type=text]")) return;
+  const pane = [activePane, ...panes].find(pane => pane.busy);
+  if (!pane?.key(event)) return;
+  event.preventDefault();
+  event.stopPropagation();
+}, true);
+
+// drag and drop: slide files, folders of slides, or MRXS folders, into the pane they are dropped on
+const entryFile = entry => new Promise((resolve, reject) => entry.file(resolve, reject));
+async function folderEntries(folder) {
+  const reader = folder.createReader(), entries = [];
+  for (let batch; (batch = await new Promise((resolve, reject) => reader.readEntries(resolve, reject))).length;) entries.push(...batch);
+  return entries;
+}
+const folderFiles = async folder => Promise.all((await folderEntries(folder)).filter(entry => entry.isFile).map(entryFile));
+async function mrxsFolders(folder, files) {
+  if (hasSlidedat(files)) return [mrxsEntry(folder.name, files)];
+  const found = [];
+  for (const entry of await folderEntries(folder)) {
+    if (!entry.isDirectory) continue;
+    const inner = await folderFiles(entry);
+    if (hasSlidedat(inner)) found.push(mrxsEntry(entry.name, inner));
+  }
+  return found;
+}
+const paneAt = (x, y) => panes.find(pane => { const rect = pane.root.getBoundingClientRect(); return !pane.root.hidden && x >= rect.left && x < rect.right && y >= rect.top && y < rect.bottom; }) ?? panes[0];
+window.addEventListener("dragenter", event => { if (event.dataTransfer.types.includes("Files")) $("drop").hidden = false; });
+window.addEventListener("dragover", event => event.preventDefault());
+window.addEventListener("drop", event => event.preventDefault());
+$("drop").addEventListener("dragleave", () => { $("drop").hidden = true; });
+$("drop").addEventListener("drop", async event => {
+  $("drop").hidden = true;
+  const pane = paneAt(event.clientX, event.clientY);
+  // every item must be read before the first await, after which the drop data is gone
+  const dropped = [...event.dataTransfer.items].map(item => [item.webkitGetAsEntry(), item.getAsFile()]);
+  const files = dropped.map(([, file]) => file).filter(file => file && isTIFF(file.name));
+  if (files.length) await addSlideFiles(files, undefined, [], pane);
+  for (const [entry, file] of dropped.filter(([, file]) => !(file && isTIFF(file.name)))) {
+    if (entry?.isDirectory) {
+      const inner = await folderFiles(entry);
+      addSlideFiles(inner, entry.name, await mrxsFolders(entry, inner), pane);
+    } else if (file && !dropped.some(([entry]) => entry?.isDirectory)) addSlideFiles([file], file.name, [], pane);
+  }
 });
 </script>
 </body>
