@@ -1,0 +1,23 @@
+[project]
+name = "pathology-tests"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "einops>=0.8.2",
+    "imagecodecs>=2026.8.16",
+    "jaxtyping>=0.3.11",
+    "numpy>=2.5.3",
+    "openslide-bin>=4.0.1.2",
+    "openslide-python>=1.4.6",
+    "pillow>=12.3.0",
+    "pytest>=9.1.1",
+    "pytest-playwright>=0.10.0",
+    "tifffile>=2026.9.20",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
