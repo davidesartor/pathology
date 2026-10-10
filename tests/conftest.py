@@ -48,6 +48,7 @@ def wait_for(page: Page, expression: str, timeout: float = 30):
 def load(page: Page, server: str, name: str) -> Page:
     # the save picker would block; without it the pages save as downloads
     page.add_init_script("window.showSaveFilePicker = undefined")
+    page.add_init_script("localStorage.setItem('disclaimer-seen', '1')")  # the first-visit notice would block every click
     page.goto(f"{server}/{name}")
     wait_for(page, "typeof viewer !== 'undefined' && viewer.isOpen !== undefined")
     return page

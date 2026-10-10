@@ -57,9 +57,21 @@
   #drop { position: fixed; inset: 0; z-index: 10; display: grid; place-items: center; background: rgba(0, 0, 0, 0.6); border: 3px dashed #888; font-size: 20px; }
   [hidden] { display: none !important; }
   #drop * { pointer-events: none; }
+  .disclaimer { max-width: 340px; color: #ddd; background: #222; border: 1px solid #555; border-radius: 8px; padding: 16px 18px; font: 13px/1.45 system-ui, sans-serif; }
+  .disclaimer::backdrop { background: rgba(0, 0, 0, 0.6); }
+  .disclaimer h2 { margin: 0 0 8px; font-size: 15px; }
+  .disclaimer p { margin: 0 0 14px; }
+  .disclaimer a { color: inherit; }
+  .disclaimer form { margin: 0; text-align: right; }
+  .disclaimer button { font: inherit; color: inherit; background: #066; border: 1px solid #0ff; border-radius: 4px; padding: 4px 14px; cursor: pointer; }
 </style>
 </head>
 <body>
+<dialog class="disclaimer" id="disclaimer">
+  <h2>Research use only</h2>
+  <p>Not for diagnosis or clinical decisions. Provided as is, without warranty. <a href="https://github.com/davidesartor/pathology#disclaimer" target="_blank" rel="noopener">Details</a></p>
+  <form method="dialog"><button autofocus>I understand</button></form>
+</dialog>
 <div id="panes"></div>
 <!-- one per pane; the first pane's parts also get their data-part as id -->
 <template id="pane-template">
@@ -119,6 +131,12 @@
 <script src="https://cdn.jsdelivr.net/npm/geotiff@3.0.5/dist-browser/geotiff.js" integrity="sha384-QchpYxK+DqZYCChtK4SebrECTZEIQ0ahLhme9vwraN6KNxOGwtS66BG72wo1HQDN" crossorigin="anonymous"></script>
 <script src="https://cdn.jsdelivr.net/npm/@cornerstonejs/codec-openjpeg@1.3.6/dist/openjpegwasm_decode.js" integrity="sha384-2d0uFnefmrsUyM92krljsCy3fnu5wefwCwX0au75MDClK9PQa3FuUWhmvDNPrg68" crossorigin="anonymous"></script>
 <script>
+// the research-use notice, once per browser
+const disclaimer = document.getElementById("disclaimer");
+try {
+  if (!localStorage.getItem("disclaimer-seen")) disclaimer.showModal();
+  localStorage.setItem("disclaimer-seen", "1");
+} catch { disclaimer.showModal(); }
 const $ = id => document.getElementById(id);
 const isTIFF = name => /\.(tiff?|btf|tf8|svs)$/i.test(name);
 
