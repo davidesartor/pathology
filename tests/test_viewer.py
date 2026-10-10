@@ -83,24 +83,27 @@ def test_capture_frame_keeps_its_shape_and_settings(viewer: Page, tiffs):
     assert abs(width / height - 4 / 3) < 0.01, size
 
 
-def test_capture_preset_width(viewer: Page, tiffs):
-    """A preset or typed width spans that much tissue, zooming out to fit; resizing by hand lets it go."""
+def test_capture_size_in_microns(viewer: Page, tiffs):
+    """A typed side spans that much tissue, a fixed shape carrying the other along and the view zooming out to fit; the boxes follow freehand resizing."""
     open_files(viewer, tiffs["ome_zlib"][0])
     viewer.evaluate("viewer.viewport.zoomTo(viewer.viewport.imageToViewportZoom(1), null, true)")
     viewer.click("#capture")
     viewer.click("#capture-shape [data-value='4:3']")
-    viewer.click("#capture-width [data-value='500']")
-    assert viewer.locator("#capture-size").text_content().startswith("2,000 × 1,500 px · 500 µm × 375 µm")
+    viewer.fill("#capture-width", "500")
+    viewer.press("#capture-width", "Enter")
+    assert viewer.locator("#capture-size").text_content().startswith("2,000 × 1,500 px")
+    assert viewer.input_value("#capture-height") == "375"
     assert viewer.evaluate("viewer.viewport.viewportToImageZoom(viewer.viewport.getZoom(true))") <= 0.9 * 1000 / 2000 + 1e-3
-    assert viewer.locator("#capture-width .active").get_attribute("data-value") == "500"
+    viewer.click("#capture-shape [data-value='free']")
+    viewer.fill("#capture-height", "100")
+    viewer.press("#capture-height", "Enter")
+    assert viewer.locator("#capture-size").text_content().startswith("2,000 × 400 px")
+    before = viewer.input_value("#capture-width")
     rect = viewer.evaluate("(() => { const s = viewer.viewport.getContainerSize(); return [s.x, s.y]; })()")
-    corner = (rect[0] / 2 + 0.45 * rect[0], rect[1] / 2 + 0.45 * rect[0] * 3 / 4)
-    drag(viewer, corner, (corner[0] - 100, corner[1] - 75))
-    assert viewer.locator("#capture-width .active").count() == 0
-    viewer.fill("#capture-width-custom", "300")
-    viewer.press("#capture-width-custom", "Enter")
-    assert viewer.locator("#capture-size").text_content().startswith("1,200 × 900 px · 300 µm × 225 µm")
-    assert viewer.locator("#capture-width .active").get_attribute("data-part") == "capture-width-custom"
+    scale = viewer.evaluate("viewer.viewport.viewportToImageZoom(viewer.viewport.getZoom(true))")
+    corner = (rect[0] / 2 + 1000 * scale, rect[1] / 2 + 200 * scale)
+    drag(viewer, corner, (corner[0] - 100, corner[1]))
+    assert viewer.input_value("#capture-width") != before
 
 
 def test_zoom_presets(viewer: Page, tiffs):

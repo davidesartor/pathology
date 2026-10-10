@@ -35,10 +35,10 @@
   .panel .seg button { flex: 1; min-width: 0; padding: 3px 2px; border-radius: 0; margin-left: -1px; }
   .panel .seg button:first-child { border-radius: 4px 0 0 4px; margin-left: 0; }
   .panel .seg button:last-child { border-radius: 0 4px 4px 0; }
-  .panel .seg input { flex: 1; min-width: 0; font: inherit; color: inherit; text-align: center; background: #333; border: 1px solid #555; border-radius: 0 4px 4px 0; margin-left: -1px; padding: 3px 2px; }
-  .panel .seg input:focus { outline: none; border-color: #0ff; position: relative; z-index: 1; }
-  .panel .seg input.active { background: #066; border-color: #0ff; position: relative; z-index: 1; }
-  .panel .seg input:disabled { opacity: 0.5; }
+  .panel .dims { display: flex; align-items: center; gap: 6px; margin-top: 3px; }
+  .panel .dims input { flex: 1; min-width: 0; font: inherit; color: inherit; text-align: center; font-variant-numeric: tabular-nums; background: #333; border: 1px solid #555; border-radius: 4px; padding: 3px 2px; }
+  .panel .dims input:focus { outline: none; border-color: #0ff; }
+  .panel .dims input:disabled { opacity: 0.5; }
   .panel .seg button.active { position: relative; z-index: 1; }  /* its outline sits over the neighbours it overlaps */
   .panel .option { margin-top: 8px; color: #aaa; }
   .panel .capture-size { margin: 8px 0 0; color: #ccc; font-variant-numeric: tabular-nums; }
@@ -91,11 +91,11 @@
     <p class="note" data-part="draw-help" hidden>Drag to outline an area, or click to place corners. Close with Enter, a double-click or a click on the first corner. Backspace undoes, Esc cancels. Two fingers pan, pinch zooms.</p>
     <p class="note" data-part="measure-help" hidden>Drag a line, or click its two ends. Shift keeps it level or upright. Backspace undoes, Esc stops. Two fingers pan, pinch zooms.</p>
     <div data-part="capture-settings" hidden>
-      <p class="note">Drag the frame to move it and its corners to resize it; drag outside it to pan. Enter saves, Esc closes.</p>
+      <p class="note">Drag the frame to move it and its corners to resize it, or type its size; drag outside it to pan. Enter saves, Esc closes.</p>
       <div class="option">Shape</div>
       <div class="seg" data-part="capture-shape"><button data-value="free">Free</button><button data-value="1:1">1:1</button><button data-value="4:3">4:3</button><button data-value="3:2">3:2</button><button data-value="16:9">16:9</button><button data-part="capture-turn" title="swap width and height">⤾</button></div>
-      <div class="option">Width (µm)</div>
-      <div class="seg" data-part="capture-width"><button data-value="100">100</button><button data-value="500">500</button><button data-value="1000">1000</button><button data-value="5000">5000</button><input type="text" inputmode="decimal" data-part="capture-width-custom" placeholder="other" title="any width in µm; Enter sets it"></div>
+      <div class="option">Size (µm)</div>
+      <div class="dims"><input type="text" inputmode="decimal" data-part="capture-width" title="width in µm; Enter sets it">×<input type="text" inputmode="decimal" data-part="capture-height" title="height in µm; Enter sets it"></div>
       <div class="option">Scale bar</div>
       <div class="seg" data-part="capture-corner"><button data-value="top-left" title="top left">↖</button><button data-value="top-right" title="top right">↗</button><button data-value="bottom-left" title="bottom left">↙</button><button data-value="bottom-right" title="bottom right">↘</button><button data-value="none">None</button></div>
       <p class="capture-size" data-part="capture-size"></p>
@@ -686,8 +686,8 @@ async function saveImage(suggestedName, render) {
   }
 }
 
-// the last capture's shape, preset width (µm), size (slide px) and corner, for the next
-const captureSettings = {shape: "free", portrait: false, width: null, size: null, corner: "bottom-left"};
+// the last capture's shape, size (slide px) and corner, for the next
+const captureSettings = {shape: "free", portrait: false, size: null, corner: "bottom-left"};
 try { Object.assign(captureSettings, JSON.parse(localStorage.getItem("capture-settings"))); } catch {}
 
 // the info box opens as it was last left, or open on wide screens
@@ -984,14 +984,18 @@ function createPane(index) {
     frame = null;
     if (size && size.width * scale <= 0.9 * view.x && size.height * scale <= 0.9 * view.y) shapeFrame(size.width * scale, size.height * scale);
     else shapeFrame(0.6 * view.x, 0.6 * view.y);
-    applyFrameWidth();
-    showCaptureSettings();
   }
-  // a preset width: the frame spans that much tissue across the screen, keeping its shape; the view zooms out if it would not fit
-  function applyFrameWidth() {
-    if (!captureSettings.width || !slide.mpp) return;
-    const width = captureSettings.width / slide.mpp, aspect = captureAspect() ?? frame.width / frame.height;
-    frame = {...frame, width, height: width / aspect};
+  // a typed side in µm; a fixed shape carries the other side along, and the view zooms out if the frame would not fit
+  function setFrameMicrons(side, microns) {
+    if (microns > 0 && slide.mpp) {
+      const length = microns / slide.mpp, aspect = captureAspect();
+      if (side === "width") frame = {...frame, width: length, height: aspect ? length / aspect : frame.height};
+      else frame = {...frame, height: length, width: aspect ? length * aspect : frame.width};
+      fitFrameInView();
+    }
+    draw();
+  }
+  function fitFrameInView() {
     const view = viewer.viewport.getContainerSize(), scale = screenScale();
     const fit = Math.min(0.9 * view.x / (frame.width * scale), 0.9 * view.y / (frame.height * scale));
     if (fit >= 1) return;
@@ -1033,7 +1037,6 @@ function createPane(index) {
       if (aspect) [width, height] = width / height > aspect ? [width, width / aspect] : [height * aspect, height];
       const [left, top] = [event.position.x < fixed.x ? fixed.x - width : fixed.x, event.position.y < fixed.y ? fixed.y - height : fixed.y];
       setFrameRect({left, top, width, height});
-      if (captureSettings.width) changeCaptureSettings({width: null});
     }
     draw();
   });
@@ -1044,16 +1047,6 @@ function createPane(index) {
   const showCaptureSettings = () => {
     for (const button of part("capture-shape").querySelectorAll("[data-value]")) button.classList.toggle("active", button.dataset.value === captureSettings.shape);
     part("capture-turn").classList.toggle("active", captureSettings.portrait);
-    const presetWidths = [...part("capture-width").querySelectorAll("button")];
-    for (const button of presetWidths) {
-      button.disabled = !slide?.mpp;
-      button.classList.toggle("active", !!slide?.mpp && Number(button.dataset.value) === captureSettings.width);
-    }
-    // a width that is no preset shows in the custom box
-    const custom = part("capture-width-custom"), isCustom = !!captureSettings.width && !presetWidths.some(button => Number(button.dataset.value) === captureSettings.width);
-    custom.disabled = !slide?.mpp;
-    custom.classList.toggle("active", !!slide?.mpp && isCustom);
-    if (document.activeElement !== custom) custom.value = isCustom ? captureSettings.width : "";
     for (const button of part("capture-corner").children) button.classList.toggle("active", button.dataset.value === captureSettings.corner);
   };
   const changeCaptureSettings = change => {
@@ -1067,7 +1060,6 @@ function createPane(index) {
       changeCaptureSettings({shape: button.dataset.value});
       const {width, height} = frameRect();
       shapeFrame(width, height);
-      applyFrameWidth();
       draw();
     });
   }
@@ -1075,26 +1067,14 @@ function createPane(index) {
     changeCaptureSettings({portrait: !captureSettings.portrait});
     const {width, height} = frameRect();
     shapeFrame(height, width);
-    applyFrameWidth();
     draw();
   });
-  // a second press on the chosen width lets the frame be any width again
-  for (const button of part("capture-width").querySelectorAll("button")) {
-    button.addEventListener("click", () => {
-      const width = Number(button.dataset.value);
-      changeCaptureSettings({width: captureSettings.width === width ? null : width});
-      applyFrameWidth();
-      draw();
-    });
+  // a side typed in µm is set on Enter or on leaving its box
+  for (const side of ["width", "height"]) {
+    const input = part(`capture-${side}`);
+    input.addEventListener("change", () => setFrameMicrons(side, parseFloat(input.value.replace(",", "."))));
+    input.addEventListener("keydown", event => { if (event.key === "Enter") input.blur(); });
   }
-  // a custom width is set on Enter or leaving the box; an empty box lets the frame be any width
-  part("capture-width-custom").addEventListener("change", event => {
-    const width = parseFloat(event.target.value.replace(",", "."));
-    changeCaptureSettings({width: width > 0 ? width : null});
-    applyFrameWidth();
-    draw();
-  });
-  part("capture-width-custom").addEventListener("keydown", event => { if (event.key === "Enter") event.target.blur(); });
   for (const button of part("capture-corner").children) button.addEventListener("click", () => changeCaptureSettings({corner: button.dataset.value}));
   showCaptureSettings();
   pane.showCaptureSettings = showCaptureSettings;
@@ -1272,8 +1252,12 @@ function createPane(index) {
       ctx.fillRect(x - 5, y - 5, 10, 10);
       ctx.strokeRect(x - 5, y - 5, 10, 10);
     }
-    const area = slide.mpp ? ` · ${micronsText(+(box.width * slide.mpp).toPrecision(3))} × ${micronsText(+(box.height * slide.mpp).toPrecision(3))}` : "";
-    part("capture-size").textContent = `${outWidth.toLocaleString()} × ${outHeight.toLocaleString()} px${area}` + (downsample > 1 ? ` — too large for this browser at full resolution, so saved at 1/${downsample}` : "");
+    for (const [side, length] of [["width", box.width], ["height", box.height]]) {
+      const input = part(`capture-${side}`);
+      input.disabled = !slide.mpp;
+      if (document.activeElement !== input) input.value = slide.mpp ? +(length * slide.mpp).toPrecision(4) : "";
+    }
+    part("capture-size").textContent = `${outWidth.toLocaleString()} × ${outHeight.toLocaleString()} px` + (downsample > 1 ? ` — too large for this browser at full resolution, so saved at 1/${downsample}` : "");
     part("capture-size").classList.toggle("warn", downsample > 1);
   }
 
