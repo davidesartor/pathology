@@ -90,6 +90,8 @@
       <p class="note">Drag the frame to move it and its corners to resize it; drag outside it to pan. Enter saves, Esc closes.</p>
       <div class="option">Shape</div>
       <div class="seg" data-part="capture-shape"><button data-value="free">Free</button><button data-value="1:1">1:1</button><button data-value="4:3">4:3</button><button data-value="3:2">3:2</button><button data-value="16:9">16:9</button><button data-part="capture-turn" title="swap width and height">⤾</button></div>
+      <div class="option">Width (µm)</div>
+      <div class="seg" data-part="capture-width"><button data-value="100">100</button><button data-value="250">250</button><button data-value="500">500</button><button data-value="1000">1000</button><button data-value="2000">2000</button></div>
       <div class="option">Scale bar</div>
       <div class="seg" data-part="capture-corner"><button data-value="top-left" title="top left">↖</button><button data-value="top-right" title="top right">↗</button><button data-value="bottom-left" title="bottom left">↙</button><button data-value="bottom-right" title="bottom right">↘</button><button data-value="none">None</button></div>
       <p class="capture-size" data-part="capture-size"></p>
@@ -680,8 +682,8 @@ async function saveImage(suggestedName, render) {
   }
 }
 
-// the last capture's shape, size (slide px) and corner, for the next
-const captureSettings = {shape: "free", portrait: false, size: null, corner: "bottom-left"};
+// the last capture's shape, preset width (µm), size (slide px) and corner, for the next
+const captureSettings = {shape: "free", portrait: false, width: null, size: null, corner: "bottom-left"};
 try { Object.assign(captureSettings, JSON.parse(localStorage.getItem("capture-settings"))); } catch {}
 
 // the info box opens as it was last left, or open on wide screens
@@ -978,6 +980,19 @@ function createPane(index) {
     frame = null;
     if (size && size.width * scale <= 0.9 * view.x && size.height * scale <= 0.9 * view.y) shapeFrame(size.width * scale, size.height * scale);
     else shapeFrame(0.6 * view.x, 0.6 * view.y);
+    applyFrameWidth();
+    showCaptureSettings();
+  }
+  // a preset width: the frame spans that much tissue across the screen, keeping its shape; the view zooms out if it would not fit
+  function applyFrameWidth() {
+    if (!captureSettings.width || !slide.mpp) return;
+    const width = captureSettings.width / slide.mpp, aspect = captureAspect() ?? frame.width / frame.height;
+    frame = {...frame, width, height: width / aspect};
+    const view = viewer.viewport.getContainerSize(), scale = screenScale();
+    const fit = Math.min(0.9 * view.x / (frame.width * scale), 0.9 * view.y / (frame.height * scale));
+    if (fit >= 1) return;
+    viewer.viewport.zoomTo(viewer.viewport.imageToViewportZoom(scale * fit), null, true);
+    viewer.viewport.panTo(viewer.viewport.imageToViewportCoordinates(...frame.centre), true);
   }
   // corners of the frame in slide px, clockwise from the top left on screen
   function frameRing() {
@@ -1014,6 +1029,7 @@ function createPane(index) {
       if (aspect) [width, height] = width / height > aspect ? [width, width / aspect] : [height * aspect, height];
       const [left, top] = [event.position.x < fixed.x ? fixed.x - width : fixed.x, event.position.y < fixed.y ? fixed.y - height : fixed.y];
       setFrameRect({left, top, width, height});
+      if (captureSettings.width) changeCaptureSettings({width: null});
     }
     draw();
   });
@@ -1024,6 +1040,10 @@ function createPane(index) {
   const showCaptureSettings = () => {
     for (const button of part("capture-shape").querySelectorAll("[data-value]")) button.classList.toggle("active", button.dataset.value === captureSettings.shape);
     part("capture-turn").classList.toggle("active", captureSettings.portrait);
+    for (const button of part("capture-width").children) {
+      button.disabled = !slide?.mpp;
+      button.classList.toggle("active", !!slide?.mpp && Number(button.dataset.value) === captureSettings.width);
+    }
     for (const button of part("capture-corner").children) button.classList.toggle("active", button.dataset.value === captureSettings.corner);
   };
   const changeCaptureSettings = change => {
@@ -1037,6 +1057,7 @@ function createPane(index) {
       changeCaptureSettings({shape: button.dataset.value});
       const {width, height} = frameRect();
       shapeFrame(width, height);
+      applyFrameWidth();
       draw();
     });
   }
@@ -1044,8 +1065,18 @@ function createPane(index) {
     changeCaptureSettings({portrait: !captureSettings.portrait});
     const {width, height} = frameRect();
     shapeFrame(height, width);
+    applyFrameWidth();
     draw();
   });
+  // a second press on the chosen width lets the frame be any width again
+  for (const button of part("capture-width").children) {
+    button.addEventListener("click", () => {
+      const width = Number(button.dataset.value);
+      changeCaptureSettings({width: captureSettings.width === width ? null : width});
+      applyFrameWidth();
+      draw();
+    });
+  }
   for (const button of part("capture-corner").children) button.addEventListener("click", () => changeCaptureSettings({corner: button.dataset.value}));
   showCaptureSettings();
   pane.showCaptureSettings = showCaptureSettings;
