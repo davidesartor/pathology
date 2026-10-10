@@ -31,6 +31,13 @@
   .panel .area input[type=color] { width: 20px; height: 20px; padding: 0; border: none; background: none; cursor: pointer; }
   .panel .area button { padding: 0 5px; background: none; border: none; color: #999; }
   .panel .area button:hover { color: #fff; }
+  .panel .seg { display: flex; margin-top: 3px; }
+  .panel .seg button { flex: 1; min-width: 0; padding: 3px 2px; border-radius: 0; margin-left: -1px; }
+  .panel .seg button:first-child { border-radius: 4px 0 0 4px; margin-left: 0; }
+  .panel .seg button:last-child { border-radius: 0 4px 4px 0; }
+  .panel .option { margin-top: 8px; color: #aaa; }
+  .panel .capture-size { margin: 8px 0 0; color: #ccc; font-variant-numeric: tabular-nums; }
+  .panel .capture-size.warn { color: #fc6; }
   .info { bottom: 8px; left: 8px; max-width: min(360px, calc(100% - 32px)); font-variant-numeric: tabular-nums; }
   .info summary { cursor: pointer; color: #aaa; }
   .info table { margin: 4px 0 6px; border-spacing: 0; }
@@ -68,12 +75,27 @@
       <button data-part="split" title="a second pane on the right, with its own slide, view and tools">Side by side</button>
       <button data-part="link" title="pan, zoom, rotate and flip both panes together">Link views</button>
     </div>
+    <div class="seg" data-part="zoom" title="zoom to this magnification (10 µm per screen px at 1×)">
+      <button data-zoom="2.5">2.5×</button><button data-zoom="5">5×</button><button data-zoom="10">10×</button><button data-zoom="20">20×</button><button data-zoom="40">40×</button>
+    </div>
     <div class="buttons" data-part="area-buttons">
-      <button data-part="highlight" title="outline areas of interest on this slide, each in its own colour and with a name; captures show them">Highlight area</button>
-      <button data-part="capture" title="drag a rectangle over the slide to save it as a full-resolution PNG, turned and mirrored as on screen">Capture</button>
+      <button data-part="highlight" title="outline areas of interest on this slide, each in its own colour and with a name; captures show them">Highlight</button>
+      <button data-part="measure" title="draw straight lines labelled with their length; captures show them">Measure</button>
+      <button data-part="capture" title="frame part of the slide and save it as a full-resolution PNG, turned and mirrored as on screen">Capture</button>
     </div>
     <p class="note" data-part="draw-help" hidden>Drag to outline an area, or click to place corners. Close with Enter, a double-click or a click on the first corner. Backspace undoes, Esc cancels. Two fingers pan, pinch zooms.</p>
-    <p class="note" data-part="capture-help" hidden>Drag a rectangle over the area to save it as a full-resolution PNG. Esc cancels.</p>
+    <p class="note" data-part="measure-help" hidden>Drag a line, or click its two ends. Shift keeps it level or upright. Backspace undoes, Esc stops. Two fingers pan, pinch zooms.</p>
+    <div data-part="capture-settings" hidden>
+      <p class="note">Drag the frame to move it and its corners to resize it; drag outside it to pan. Enter saves, Esc closes.</p>
+      <div class="option">Shape</div>
+      <div class="seg" data-part="capture-shape"><button data-value="free">Free</button><button data-value="1:1">1:1</button><button data-value="4:3">4:3</button><button data-value="3:2">3:2</button><button data-value="16:9">16:9</button><button data-part="capture-turn" title="swap width and height">⤾</button></div>
+      <div class="option">Scale bar</div>
+      <div class="seg" data-part="capture-corner"><button data-value="top-left" title="top left">↖</button><button data-value="top-right" title="top right">↗</button><button data-value="bottom-left" title="bottom left">↙</button><button data-value="bottom-right" title="bottom right">↘</button><button data-value="none">None</button></div>
+      <div class="option">With it</div>
+      <div class="seg" data-part="capture-extras"><button data-value="magnification" title="the capture's magnification">Zoom ×</button><button data-value="name" title="the slide's name">Slide name</button><button data-value="pixel" title="the capture's µm per pixel">Pixel size</button></div>
+      <p class="capture-size" data-part="capture-size"></p>
+      <div class="buttons"><button data-part="capture-save">Save PNG</button></div>
+    </div>
     <div data-part="areas"></div>
     <p class="note" data-part="loading" hidden></p>
     <p class="note" data-part="drop-hint">or drop slides or folders anywhere</p>
@@ -509,50 +531,85 @@ function strokeOutline(ctx, path, scale, color = AREA_COLOR) {
   ctx.stroke(path);
 }
 
-// each highlight outlined in its colour, its name upright above its topmost point; `size` output px per screen px
-function drawHighlights(ctx, areas, toOutput, size) {
-  ctx.lineJoin = "round";
-  for (const area of areas) {
+// a round length (1, 2 or 5 × 10ⁿ µm) no longer than `longest` µm
+const roundMicrons = longest => [5, 2, 1].map(factor => factor * 10 ** Math.floor(Math.log10(longest))).find(length => length <= longest);
+const micronsText = microns => microns >= 1000 ? `${+(microns / 1000).toFixed(3)} mm` : `${+microns.toFixed(3)} µm`;
+// magnification as the zoom buttons and status line count it: 1× is 10 µm per px
+const magnificationText = micronsPerPx => `${+(10 / micronsPerPx).toFixed(1)}×`;
+const lineLength = (slide, [[x0, y0], [x1, y1]]) => {
+  const px = Math.hypot(x1 - x0, y1 - y0);
+  return slide.mpp ? micronsText(+(px * slide.mpp).toPrecision(3)) : `${Math.round(px)} px`;
+};
+
+// text upright at (x, y) in output px, outlined in black
+function outlinedText(ctx, text, x, y, color, size) {
+  ctx.lineWidth = 4 * size;
+  ctx.strokeStyle = "rgba(0, 0, 0, 0.8)";
+  ctx.strokeText(text, x, y);
+  ctx.fillStyle = color;
+  ctx.fillText(text, x, y);
+}
+
+// each highlight outlined in its colour, its name upright above its topmost point; each measurement as a line
+// with end ticks, its length (after its name, if any) beside its middle; `size` output px per screen px
+function drawHighlights(ctx, slide, toOutput, size) {
+  ctx.lineJoin = ctx.lineCap = "round";
+  ctx.font = `bold ${14 * size}px system-ui, sans-serif`;
+  for (const area of slide.areas) {
     const ring = area.ring.map(([x, y]) => toOutput.transformPoint({x, y}));
     const path = new Path2D();
     path.moveTo(ring[0].x, ring[0].y);
     for (const {x, y} of ring) path.lineTo(x, y);
+    if (area.kind === "line") {
+      // ticks across the ends, and the label on the side of the line facing up
+      const [a, b] = ring, length = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+      let [nx, ny] = [-(b.y - a.y) / length, (b.x - a.x) / length];
+      if (ny > 0) [nx, ny] = [-nx, -ny];
+      for (const {x, y} of ring) {
+        path.moveTo(x - 6 * size * nx, y - 6 * size * ny);
+        path.lineTo(x + 6 * size * nx, y + 6 * size * ny);
+      }
+      strokeOutline(ctx, path, 1 / size, area.color);
+      const label = [area.name, lineLength(slide, area.ring)].filter(Boolean).join(": ");
+      ctx.textAlign = Math.abs(nx) < 0.3 ? "center" : nx < 0 ? "right" : "left";
+      ctx.textBaseline = "middle";
+      outlinedText(ctx, label, (a.x + b.x) / 2 + 14 * size * nx, (a.y + b.y) / 2 + 14 * size * ny, area.color, size);
+      continue;
+    }
     path.closePath();
     strokeOutline(ctx, path, 1 / size, area.color);
     if (!area.name) continue;
     const top = ring.reduce((a, b) => b.y < a.y ? b : a);
-    ctx.font = `bold ${14 * size}px system-ui, sans-serif`;
     ctx.textAlign = "center";
-    ctx.lineWidth = 4 * size;
-    ctx.strokeStyle = "rgba(0, 0, 0, 0.8)";
-    ctx.strokeText(area.name, top.x, top.y - 8 * size);
-    ctx.fillStyle = area.color;
-    ctx.fillText(area.name, top.x, top.y - 8 * size);
+    ctx.textBaseline = "alphabetic";
+    outlinedText(ctx, area.name, top.x, top.y - 8 * size, area.color, size);
   }
 }
 
-// a round length (1, 2 or 5 × 10ⁿ µm) no longer than `longest` µm
-const roundMicrons = longest => [5, 2, 1].map(factor => factor * 10 ** Math.floor(Math.log10(longest))).find(length => length <= longest);
-const micronsText = microns => microns >= 1000 ? `${+(microns / 1000).toFixed(3)} mm` : `${+microns.toFixed(3)} µm`;
-
-// bottom-left of a capture: a scale bar of a round length, at most a quarter of its width
-function drawScaleBar(ctx, slide, width, height, downsample) {
-  if (!slide.mpp) return;
+// a capture's chosen corner: a black scale bar of a round length, at most a quarter of its width, its length above it
+// and the chosen extras above that. `toOutput` places the capture's px, for the preview on screen
+function drawCaption(ctx, slide, width, height, downsample, {corner, extras}, toOutput = new DOMMatrix()) {
+  if (!slide.mpp || corner === "none") return;
   const size = Math.max(1, Math.max(width, height) / 1000);
   const micronsPerPx = slide.mpp * downsample;
   const microns = roundMicrons(0.25 * width * micronsPerPx);
-  const barWidth = microns / micronsPerPx, pad = 8 * size;
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.font = `${12 * size}px system-ui, sans-serif`;
-  ctx.textAlign = "left";
+  const barWidth = microns / micronsPerPx, barHeight = 3 * size, pad = 12 * size, lineHeight = 16 * size;
+  const lines = [
+    extras.includes("name") && slide.name,
+    extras.includes("magnification") && magnificationText(micronsPerPx),
+    extras.includes("pixel") && `${+micronsPerPx.toPrecision(4)} µm/px`,
+    micronsText(microns),
+  ].filter(Boolean);
+  const [right, bottom] = [corner.endsWith("right"), corner.startsWith("bottom")];
+  const blockHeight = lines.length * lineHeight + barHeight;
+  const [x, top] = [right ? width - pad : pad, bottom ? height - pad - blockHeight : pad];
+  ctx.setTransform(toOutput);
+  ctx.font = `${13 * size}px system-ui, sans-serif`;
+  ctx.textAlign = right ? "right" : "left";
   ctx.textBaseline = "middle";
-  const label = micronsText(microns);
-  const boxWidth = 2 * pad + Math.max(barWidth, ctx.measureText(label).width), boxHeight = 2 * pad + 24 * size;
-  ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
-  ctx.fillRect(0, height - boxHeight, boxWidth, boxHeight);
-  ctx.fillStyle = "#fff";
-  ctx.fillText(label, pad, height - boxHeight + pad + 8 * size);
-  ctx.fillRect(pad, height - pad - 4 * size, barWidth, 4 * size);
+  ctx.fillStyle = "#000";
+  lines.forEach((line, i) => ctx.fillText(line, x, top + (i + 0.4) * lineHeight));
+  ctx.fillRect(right ? x - barWidth : x, top + lines.length * lineHeight, barWidth, barHeight);
 }
 
 // a capture is saved as it looks on screen: turned and mirrored as the view is, at full resolution unless the browser cannot hold it
@@ -566,7 +623,7 @@ function imageDownsample({width, height}) {
 }
 
 // `screenScale` (screen px per slide px) sets the highlights' line width, as on screen
-async function renderArea(slide, area, turn, screenScale, onProgress) {
+async function renderArea(slide, area, turn, screenScale, caption, onProgress) {
   const box = turnedBox(area.ring, turn), downsample = imageDownsample(box);
   const canvas = new OffscreenCanvas(Math.max(1, Math.ceil(box.width / downsample)), Math.max(1, Math.ceil(box.height / downsample)));
   const context = canvas.getContext("2d");
@@ -601,9 +658,9 @@ async function renderArea(slide, area, turn, screenScale, onProgress) {
 
   // the highlights as on screen, but never thinner than at 1 screen px per output px
   context.setTransform(1, 0, 0, 1, 0, 0);
-  drawHighlights(context, slide.areas, toImagePx, Math.max(1, 1 / (screenScale * downsample)));
+  drawHighlights(context, slide, toImagePx, Math.max(1, 1 / (screenScale * downsample)));
   context.restore();
-  drawScaleBar(context, slide, canvas.width, canvas.height, downsample);
+  drawCaption(context, slide, canvas.width, canvas.height, downsample, caption);
   return {canvas, downsample};
 }
 
@@ -627,6 +684,10 @@ async function saveImage(suggestedName, render) {
     throw error;
   }
 }
+
+// the last capture's shape, size (slide px), corner and extras, for the next
+const captureSettings = {shape: "free", portrait: false, size: null, corner: "bottom-left", extras: []};
+try { Object.assign(captureSettings, JSON.parse(localStorage.getItem("capture-settings"))); } catch {}
 
 // the info box opens as it was last left, or open on wide screens
 const infoOpen = () => { try { return (localStorage.getItem("slide-info-open") ?? String(innerWidth >= 700)) === "true"; } catch { return innerWidth >= 700; } };
@@ -664,8 +725,8 @@ function createPane(index) {
   const pane = {
     index, root, viewer,
     get slide() { return slide; },
-    get busy() { return drawing || capturing; },
-    show, close, renderTabs, renderControls, renderAreas, draw, setLoading, key, setDrawing, setCapturing,
+    get busy() { return drawing || measuring || capturing; },
+    show, close, renderTabs, renderControls, renderAreas, draw, setLoading, key, setDrawing, setMeasuring, setCapturing,
   };
   root.addEventListener("pointerenter", () => { activePane = pane; });
   root.addEventListener("pointerdown", () => { activePane = pane; });
@@ -706,6 +767,7 @@ function createPane(index) {
     const leader = linkedTo(pane);
     if (leader?.slide) follow(leader.viewer, viewer);
     else if (views.get(slide)) viewer.viewport.fitBounds(views.get(slide).bounds, true);
+    if (capturing) placeFrame();
   });
 
   // a closed slide is forgotten; the pane moves on to `next`, or empties
@@ -739,7 +801,7 @@ function createPane(index) {
   }
 
   function renderControls() {
-    part("tabs").hidden = part("view").hidden = part("area-buttons").hidden = !slides.length;
+    part("tabs").hidden = part("view").hidden = part("zoom").hidden = part("area-buttons").hidden = !slides.length;
     part("no-slides").hidden = part("drop-hint").hidden = slides.length > 0;
     part("split-row").hidden = !slides.length;
     part("split").hidden = index > 0;
@@ -776,14 +838,32 @@ function createPane(index) {
     draw();
   });
 
+  // preset magnifications, about the view's centre; they need the slide's pixel size
+  const zoomScale = magnification => magnification * slide.mpp / 10;  // screen px per slide px
+  for (const button of part("zoom").children) {
+    button.addEventListener("click", () => {
+      if (!slide?.mpp) return;
+      viewer.viewport.zoomTo(viewer.viewport.imageToViewportZoom(zoomScale(Number(button.dataset.zoom))));
+    });
+  }
+  const showZoom = scale => {
+    for (const button of part("zoom").children) {
+      button.disabled = !slide.mpp;
+      button.classList.toggle("active", !!slide.mpp && Math.abs(scale / zoomScale(Number(button.dataset.zoom)) - 1) < 0.02);
+    }
+  };
+
   // highlighting areas: a click places a corner, a drag traces
   let drawing = false;
+  let measuring = false;
   let capturing = false;
   let draft = [];  // corners of the area being drawn, in slide px
   let draftStrokes = [];  // where in draft each click or drag began, for undo
   let pressed = null;  // {position, dragged} while the pointer is down
   let pointer = null;  // pointer in slide px, for the line to the next corner
-  let captureDrag = null;  // {start, end} in screen px
+  let measureStart = null;  // slide px of the line's first end, while it is drawn
+  let frame = null;  // the capture frame: its centre in slide px, and its sides in slide px along the screen's axes
+  let frameDrag = null;  // what the press grabbed: {centre, start} to move it, {fixed} (opposite corner) to resize it
 
   const screenScale = () => { const origin = toScreen(viewer, 0, 0), alongX = toScreen(viewer, 1, 0); return Math.hypot(alongX.x - origin.x, alongX.y - origin.y); };
   const screenDistance = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]) * screenScale();
@@ -814,41 +894,176 @@ function createPane(index) {
     for (const settings of [viewer.gestureSettingsMouse, viewer.gestureSettingsTouch, viewer.gestureSettingsPen]) settings.dragToPan = settings.clickToZoom = !on;
     viewer.canvas.style.cursor = on ? "crosshair" : "";
   }
-  function setDrawing(on) {
-    if (on && capturing) setCapturing(false);
-    if (!on && draft.length) finishDraft();
-    drawing = on;
-    setToolGestures(on || capturing);
-    part("highlight").textContent = on ? "Done" : "Highlight area";
-    part("highlight").classList.toggle("active", on);
-    part("draw-help").hidden = !on;
-  }
-  part("highlight").addEventListener("click", () => setDrawing(!drawing));
-
-  // Capture: a rectangle dragged over the slide, saved as soon as it is let go
-  function setCapturing(on) {
-    if (on && drawing) setDrawing(false);
-    capturing = on;
-    captureDrag = null;
-    setToolGestures(on || drawing);
-    part("capture").textContent = on ? "Cancel" : "Capture";
-    part("capture").classList.toggle("active", on);
-    part("capture-help").hidden = !on;
+  // one tool at a time
+  function setTool(tool) {
+    if (drawing && tool !== "highlight" && draft.length) finishDraft();
+    [drawing, measuring, capturing] = ["highlight", "measure", "capture"].map(name => name === tool);
+    measureStart = null;
+    setToolGestures(drawing || measuring);
+    part("highlight").textContent = drawing ? "Done" : "Highlight";
+    part("measure").textContent = measuring ? "Done" : "Measure";
+    part("capture").textContent = capturing ? "Done" : "Capture";
+    for (const name of ["highlight", "measure", "capture"]) part(name).classList.toggle("active", name === tool);
+    part("draw-help").hidden = !drawing;
+    part("measure-help").hidden = !measuring;
+    part("capture-settings").hidden = !capturing;
+    viewer.navigator.element.parentElement.style.display = capturing ? "none" : "inline-block";  // it would cover the frame's corner
+    if (capturing) placeFrame();
     draw();
   }
+  function setDrawing(on) { setTool(on ? "highlight" : drawing ? null : capturing ? "capture" : measuring ? "measure" : null); }
+  function setMeasuring(on) { setTool(on ? "measure" : measuring ? null : drawing ? "highlight" : capturing ? "capture" : null); }
+  function setCapturing(on) { setTool(on ? "capture" : capturing ? null : drawing ? "highlight" : measuring ? "measure" : null); }
+  part("highlight").addEventListener("click", () => setDrawing(!drawing));
+  part("measure").addEventListener("click", () => setMeasuring(!measuring));
   part("capture").addEventListener("click", () => setCapturing(!capturing));
-  viewer.addHandler("canvas-press", event => { if (capturing) captureDrag = {start: event.position, end: event.position}; });
-  viewer.addHandler("canvas-drag", event => { if (capturing && captureDrag) { captureDrag.end = event.position; draw(); } });
-  viewer.addHandler("canvas-release", event => {
-    if (!capturing || !captureDrag) return;
-    const {start} = captureDrag;
-    const [left, right] = [Math.min(start.x, event.position.x), Math.max(start.x, event.position.x)];
-    const [top, bottom] = [Math.min(start.y, event.position.y), Math.max(start.y, event.position.y)];
-    if (right - left < 4 || bottom - top < 4) return void (captureDrag = null, draw());  // a click, not a rectangle
-    const ring = [[left, top], [right, top], [right, bottom], [left, bottom]].map(([x, y]) => slidePoint(new OpenSeadragon.Point(x, y)));
-    setCapturing(false);
-    saveArea({ring});
+
+  // measuring: a drag, or two clicks, draws a line; shift snaps it level or upright on screen
+  const measureEnd = (position, shift) => {
+    if (!shift) return slidePoint(position);
+    const start = toScreen(viewer, ...measureStart);
+    const level = Math.abs(position.x - start.x) >= Math.abs(position.y - start.y);
+    return slidePoint(new OpenSeadragon.Point(level ? position.x : start.x, level ? start.y : position.y));
+  };
+  function finishLine(end) {
+    const start = measureStart;
+    measureStart = null;
+    if (screenDistance(start, end) >= 4) {
+      const number = (slide.areas.at(-1)?.number ?? 0) + 1;
+      slide.areas.push({number, kind: "line", name: "", color: AREA_COLOR, ring: [start, end].map(([x, y]) => [Math.round(x), Math.round(y)])});
+      areasChanged(slide);
+    }
+    draw();
+  }
+  viewer.addHandler("canvas-press", event => {
+    if (!measuring) return;
+    pressed = {position: event.position, dragged: false};
+    measureStart ??= slidePoint(event.position);
   });
+  viewer.addHandler("canvas-drag", event => {
+    if (!measuring || !pressed) return;
+    if (event.position.distanceTo(pressed.position) >= TRACE_STEP) pressed.dragged = true;
+    pointer = measureEnd(event.position, event.originalEvent?.shiftKey);
+    draw();
+  });
+  viewer.addHandler("canvas-release", event => {
+    if (!measuring || !pressed) return;
+    const {dragged, position} = pressed;
+    pressed = null;
+    // a click that only placed the first end waits for the second
+    if (dragged || screenDistance(measureStart, slidePoint(position)) >= CLOSE_DISTANCE || event.position.distanceTo(position) >= TRACE_STEP) finishLine(measureEnd(event.position, event.originalEvent?.shiftKey));
+  });
+
+  // Capture: a frame over the slide, moved and resized by hand, saved at full resolution
+  const captureAspect = () => {
+    if (captureSettings.shape === "free") return null;
+    const [width, height] = captureSettings.shape.split(":").map(Number);
+    return captureSettings.portrait ? height / width : width / height;
+  };
+  // the frame on screen, in screen px
+  const frameRect = () => {
+    const centre = toScreen(viewer, ...frame.centre), scale = screenScale();
+    return {left: centre.x - frame.width * scale / 2, top: centre.y - frame.height * scale / 2, width: frame.width * scale, height: frame.height * scale};
+  };
+  const setFrameRect = ({left, top, width, height}) => {
+    const scale = screenScale();
+    frame = {centre: slidePoint(new OpenSeadragon.Point(left + width / 2, top + height / 2)), width: width / scale, height: height / scale};
+  };
+  // fit `width` × `height` screen px to the frame's shape, no larger than 90% of the view, about the frame's centre
+  function shapeFrame(width, height) {
+    const aspect = captureAspect(), view = viewer.viewport.getContainerSize();
+    if (aspect) [width, height] = width / height > aspect ? [height * aspect, height] : [width, width / aspect];
+    const shrink = Math.min(1, 0.9 * view.x / width, 0.9 * view.y / height);
+    const centre = frame ? toScreen(viewer, ...frame.centre) : {x: view.x / 2, y: view.y / 2};
+    setFrameRect({left: centre.x - width * shrink / 2, top: centre.y - height * shrink / 2, width: width * shrink, height: height * shrink});
+  }
+  // the frame opens on the view's centre, as large as the last one saved if that fits, else at 60% of the view
+  function placeFrame() {
+    const view = viewer.viewport.getContainerSize(), scale = screenScale(), {size} = captureSettings;
+    frame = null;
+    if (size && size.width * scale <= 0.9 * view.x && size.height * scale <= 0.9 * view.y) shapeFrame(size.width * scale, size.height * scale);
+    else shapeFrame(0.6 * view.x, 0.6 * view.y);
+  }
+  // corners of the frame in slide px, clockwise from the top left on screen
+  function frameRing() {
+    const turn = viewTurn(viewer), back = turn.inverse(), centre = turn.transformPoint({x: frame.centre[0], y: frame.centre[1]});
+    return [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([sx, sy]) => {
+      const {x, y} = back.transformPoint({x: centre.x + sx * frame.width / 2, y: centre.y + sy * frame.height / 2});
+      return [x, y];
+    });
+  }
+  // what a press at `position` grabs: a corner, the frame itself, or nothing (the slide pans)
+  function frameHit(position) {
+    const {left, top, width, height} = frameRect();
+    const corners = [[left, top], [left + width, top], [left + width, top + height], [left, top + height]];
+    const corner = corners.findIndex(([x, y]) => Math.hypot(position.x - x, position.y - y) < 12);
+    if (corner >= 0) return {corner, fixed: slidePoint(new OpenSeadragon.Point(...corners[(corner + 2) % 4]))};
+    if (position.x > left && position.x < left + width && position.y > top && position.y < top + height) return {move: true};
+    return null;
+  }
+  viewer.addHandler("canvas-press", event => {
+    if (!capturing || !frame) return;
+    const hit = frameHit(event.position);
+    frameDrag = hit && {...hit, start: event.position, centre: toScreen(viewer, ...frame.centre)};
+  });
+  viewer.addHandler("canvas-drag", event => {
+    if (!capturing || !frameDrag) return;
+    event.preventDefaultAction = true;
+    if (frameDrag.move) {
+      const {centre, start} = frameDrag;
+      frame.centre = slidePoint(new OpenSeadragon.Point(centre.x + event.position.x - start.x, centre.y + event.position.y - start.y));
+    } else {
+      // the opposite corner stays put; a fixed shape grows to cover the pointer
+      const fixed = toScreen(viewer, ...frameDrag.fixed), aspect = captureAspect();
+      let [width, height] = [Math.max(8, Math.abs(event.position.x - fixed.x)), Math.max(8, Math.abs(event.position.y - fixed.y))];
+      if (aspect) [width, height] = width / height > aspect ? [width, width / aspect] : [height * aspect, height];
+      const [left, top] = [event.position.x < fixed.x ? fixed.x - width : fixed.x, event.position.y < fixed.y ? fixed.y - height : fixed.y];
+      setFrameRect({left, top, width, height});
+    }
+    draw();
+  });
+  viewer.addHandler("canvas-drag-end", event => { if (capturing && frameDrag) event.preventDefaultAction = true; });
+  viewer.addHandler("canvas-click", event => { if (capturing) event.preventDefaultAction = true; });
+
+  // the capture settings: picked as toggles, and kept for the next capture
+  const showCaptureSettings = () => {
+    for (const button of part("capture-shape").querySelectorAll("[data-value]")) button.classList.toggle("active", button.dataset.value === captureSettings.shape);
+    part("capture-turn").classList.toggle("active", captureSettings.portrait);
+    for (const button of part("capture-corner").children) button.classList.toggle("active", button.dataset.value === captureSettings.corner);
+    for (const button of part("capture-extras").children) button.classList.toggle("active", captureSettings.extras.includes(button.dataset.value));
+  };
+  const changeCaptureSettings = change => {
+    Object.assign(captureSettings, change);
+    try { localStorage.setItem("capture-settings", JSON.stringify(captureSettings)); } catch {}
+    panes.forEach(other => other.showCaptureSettings());
+    if (capturing) draw();
+  };
+  for (const button of part("capture-shape").querySelectorAll("[data-value]")) {
+    button.addEventListener("click", () => {
+      changeCaptureSettings({shape: button.dataset.value});
+      const {width, height} = frameRect();
+      shapeFrame(width, height);
+      draw();
+    });
+  }
+  part("capture-turn").addEventListener("click", () => {
+    changeCaptureSettings({portrait: !captureSettings.portrait});
+    const {width, height} = frameRect();
+    shapeFrame(height, width);
+    draw();
+  });
+  for (const button of part("capture-corner").children) button.addEventListener("click", () => changeCaptureSettings({corner: button.dataset.value}));
+  for (const button of part("capture-extras").children) {
+    const extra = button.dataset.value;
+    button.addEventListener("click", () => changeCaptureSettings({extras: captureSettings.extras.includes(extra) ? captureSettings.extras.filter(other => other !== extra) : [...captureSettings.extras, extra]}));
+  }
+  showCaptureSettings();
+  pane.showCaptureSettings = showCaptureSettings;
+  function saveFrame() {
+    changeCaptureSettings({size: {width: frame.width, height: frame.height}});
+    saveArea({ring: frameRing()});
+  }
+  part("capture-save").addEventListener("click", saveFrame);
 
   viewer.addHandler("canvas-press", event => { if (drawing) pressed = {position: event.position, dragged: false}; });
   viewer.addHandler("canvas-drag", event => {
@@ -883,6 +1098,9 @@ function createPane(index) {
   // the tools' keys; false when the key is not theirs
   function key(event) {
     if (capturing && event.key === "Escape") setCapturing(false);
+    else if (capturing && event.key === "Enter") saveFrame();
+    else if (measuring && event.key === "Escape") measureStart ? (measureStart = null, draw()) : setMeasuring(false);
+    else if (measuring && (event.key === "Backspace" || event.key === "Delete" || (event.key === "z" && (event.metaKey || event.ctrlKey)))) measureStart ? (measureStart = null, draw()) : undo();
     else if (!drawing) return false;
     else if (event.key === "Enter") finishDraft();
     else if (event.key === "Escape") draft.length ? ([draft, draftStrokes] = [[], []], draw()) : setDrawing(false);
@@ -891,14 +1109,14 @@ function createPane(index) {
     return true;
   }
 
-  // while drawing or capturing, a trackpad works as in map apps, since dragging draws: two fingers pan and a pinch zooms
+  // while drawing or measuring, a trackpad works as in map apps, since dragging draws: two fingers pan and a pinch zooms
   // (Chrome sends a pinch as ctrl+wheel, Safari as gesture events)
   const pointerPoint = event => {
     const rect = viewer.container.getBoundingClientRect();
     return viewer.viewport.pointFromPixel(unmirrored(viewer, new OpenSeadragon.Point(event.clientX - rect.left, event.clientY - rect.top)));
   };
   viewer.container.addEventListener("wheel", event => {
-    if (!drawing && !capturing) return;
+    if (!drawing && !measuring) return;
     event.preventDefault();
     event.stopPropagation();
     const unit = event.deltaMode === 1 ? 16 : 1;  // lines or px
@@ -907,9 +1125,9 @@ function createPane(index) {
     viewer.viewport.applyConstraints();
   }, {capture: true, passive: false});
   let gestureScale = 1;
-  viewer.container.addEventListener("gesturestart", event => { if (drawing || capturing) { event.preventDefault(); gestureScale = 1; } });
+  viewer.container.addEventListener("gesturestart", event => { if (drawing || measuring) { event.preventDefault(); gestureScale = 1; } });
   viewer.container.addEventListener("gesturechange", event => {
-    if (!drawing && !capturing) return;
+    if (!drawing && !measuring) return;
     event.preventDefault();
     viewer.viewport.zoomBy(event.scale / gestureScale, pointerPoint(event), true);
     viewer.viewport.applyConstraints();
@@ -918,14 +1136,12 @@ function createPane(index) {
 
   async function saveArea(area) {
     const turn = viewTurn(viewer), box = turnedBox(area.ring, turn), downsample = imageDownsample(box);
-    const [width, height] = [Math.ceil(box.width / downsample), Math.ceil(box.height / downsample)];
-    if (downsample > 1 && !confirm(`The capture is ${Math.ceil(box.width).toLocaleString()} × ${Math.ceil(box.height).toLocaleString()} px at full resolution, more than this browser can hold in one image. Save it at 1/${downsample} resolution (${width.toLocaleString()} × ${height.toLocaleString()} px)? Or cancel and pick a smaller area.`)) return;
     const [x, y] = [Math.round(Math.max(0, Math.min(...area.ring.map(([x]) => x)))), Math.round(Math.max(0, Math.min(...area.ring.map(([, y]) => y))))];
     const name = `${slide.name}_x${x}_y${y}${downsample > 1 ? `_1to${downsample}` : ""}.png`;
-    const captured = slide, scale = screenScale();
+    const captured = slide, scale = screenScale(), caption = {corner: captureSettings.corner, extras: [...captureSettings.extras]};
     try {
       await saveImage(name, async () => {
-        const {canvas} = await renderArea(captured, area, turn, scale, fraction => setLoading(`reading the capture: ${Math.round(fraction * 100)}%`));
+        const {canvas} = await renderArea(captured, area, turn, scale, caption, fraction => setLoading(`reading the capture: ${Math.round(fraction * 100)}%`));
         setLoading("saving the capture…");
         return canvas.convertToBlob({type: "image/png"});
       });
@@ -950,9 +1166,14 @@ function createPane(index) {
     part("areas").replaceChildren(...(slide?.areas ?? []).map(area => {
       const row = document.createElement("div");
       row.className = "area";
-      row.innerHTML = `<input type="color" title="colour of this highlight"><input type="text" title="name of this highlight, shown by it" spellcheck="false"><button title="show this highlight">◎</button><button title="remove this highlight">×</button>`;
+      const thing = area.kind === "line" ? "measurement" : "highlight";
+      row.innerHTML = `<input type="color" title="colour of this ${thing}"><input type="text" title="name of this ${thing}, shown by it" spellcheck="false"><button title="show this ${thing}">◎</button><button title="remove this ${thing}">×</button>`;
       const [color, name, showButton, remove] = row.children;
       [color.value, name.value] = [area.color, area.name];
+      if (area.kind === "line") {
+        name.placeholder = "Measure";
+        name.after(Object.assign(document.createElement("span"), {className: "count", textContent: lineLength(slide, area.ring)}));
+      }
       color.addEventListener("input", () => { area.color = color.value; areasChanged(slide, pane); });
       name.addEventListener("input", () => { area.name = name.value; areasChanged(slide, pane); });
       name.addEventListener("keydown", event => { if (event.key === "Enter" || event.key === "Escape") name.blur(); });
@@ -984,6 +1205,39 @@ function createPane(index) {
     part("scale-label").textContent = micronsText(microns);
   }
 
+  // the capture frame: the slide outside it darkened, handles on its corners, its caption as it will be saved,
+  // and the image's size in the panel
+  function drawFrame(dpr, width, height) {
+    const rect = frameRect(), box = turnedBox(frameRing(), viewTurn(viewer)), downsample = imageDownsample(box);
+    const [outWidth, outHeight] = [Math.max(1, Math.ceil(box.width / downsample)), Math.max(1, Math.ceil(box.height / downsample))];
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const shade = new Path2D();
+    shade.rect(0, 0, width, height);
+    shade.rect(rect.left, rect.top, rect.width, rect.height);
+    ctx.fillStyle = "rgba(0, 0, 0, 0.55)";
+    ctx.fill(shade, "evenodd");
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(rect.left, rect.top, rect.width, rect.height);
+    ctx.clip();
+    const outputScale = rect.width / outWidth;  // screen px per image px
+    drawCaption(ctx, slide, outWidth, outHeight, downsample, captureSettings, new DOMMatrix([dpr, 0, 0, dpr, 0, 0]).translate(rect.left, rect.top).scale(outputScale));
+    ctx.restore();
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = "#fff";
+    ctx.strokeRect(rect.left, rect.top, rect.width, rect.height);
+    ctx.fillStyle = "#fff";
+    ctx.strokeStyle = "rgba(0, 0, 0, 0.7)";
+    for (const [x, y] of [[rect.left, rect.top], [rect.left + rect.width, rect.top], [rect.left + rect.width, rect.top + rect.height], [rect.left, rect.top + rect.height]]) {
+      ctx.fillRect(x - 5, y - 5, 10, 10);
+      ctx.strokeRect(x - 5, y - 5, 10, 10);
+    }
+    const area = slide.mpp ? ` · ${micronsText(+(box.width * slide.mpp).toPrecision(3))} × ${micronsText(+(box.height * slide.mpp).toPrecision(3))}` : "";
+    part("capture-size").textContent = `${outWidth.toLocaleString()} × ${outHeight.toLocaleString()} px${area}` + (downsample > 1 ? ` — too large for this browser at full resolution, so saved at 1/${downsample}` : "");
+    part("capture-size").classList.toggle("warn", downsample > 1);
+  }
+
   let cursorText = "";
   let zoomText = "";
   const showStatus = () => { part("status").textContent = [cursorText, zoomText].filter(Boolean).join("  ·  "); };
@@ -999,7 +1253,8 @@ function createPane(index) {
     const origin = toScreen(viewer, 0, 0), alongX = toScreen(viewer, 1, 0), alongY = toScreen(viewer, 0, 1);
     const scale = Math.hypot(alongX.x - origin.x, alongX.y - origin.y);
     const toDevice = new DOMMatrix([(alongX.x - origin.x) * dpr, (alongX.y - origin.y) * dpr, (alongY.x - origin.x) * dpr, (alongY.y - origin.y) * dpr, origin.x * dpr, origin.y * dpr]);
-    drawHighlights(ctx, slide.areas, toDevice, dpr);
+    drawHighlights(ctx, slide, toDevice, dpr);
+    if (measuring && measureStart && pointer) drawHighlights(ctx, {mpp: slide.mpp, areas: [{kind: "line", color: AREA_COLOR, ring: [measureStart, pointer]}]}, toDevice, dpr);
 
     // the area being drawn, with a line to the pointer and its first corner filled when a click would close it
     ctx.setTransform(toDevice);
@@ -1016,16 +1271,9 @@ function createPane(index) {
       ctx.fill();
       ctx.stroke();
     }
-    if (captureDrag) {
-      const {start, end} = captureDrag;
-      const path = new Path2D();
-      path.rect(Math.min(start.x, end.x), Math.min(start.y, end.y), Math.abs(end.x - start.x), Math.abs(end.y - start.y));
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      ctx.fillStyle = "rgba(255, 255, 255, 0.12)";
-      ctx.fill(path);
-      strokeOutline(ctx, path, 1);
-    }
+    if (capturing && frame) drawFrame(dpr, width, height);
     zoomText = slide.mpp ? `${(scale * 10 / slide.mpp).toFixed(1)}×` : `${scale.toFixed(2)} screen px/px`;
+    showZoom(scale);
     showStatus();
     renderInfo(scale);
   }
@@ -1038,6 +1286,14 @@ function createPane(index) {
       if (drawing) {
         pointer = [point.x, point.y];
         if (draft.length) draw();
+      }
+      if (measuring && measureStart && !pressed) {
+        pointer = measureEnd(event.position, event.originalEvent?.shiftKey);
+        draw();
+      }
+      if (capturing && frame && !event.originalEvent?.buttons) {
+        const hit = frameHit(event.position);
+        viewer.canvas.style.cursor = !hit ? "" : hit.move ? "move" : hit.corner % 2 ? "nesw-resize" : "nwse-resize";
       }
       cursorText = `x ${Math.round(point.x)}  y ${Math.round(point.y)} px`;
       showStatus();
@@ -1068,6 +1324,7 @@ function setSplit(on) {
   panes[1].root.hidden = !on;
   if (!on) {
     panes[1].setDrawing(false);
+    panes[1].setMeasuring(false);
     panes[1].setCapturing(false);
     activePane = panes[0];
   }
