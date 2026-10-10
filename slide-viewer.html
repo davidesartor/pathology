@@ -35,6 +35,7 @@
   .panel .seg button { flex: 1; min-width: 0; padding: 3px 2px; border-radius: 0; margin-left: -1px; }
   .panel .seg button:first-child { border-radius: 4px 0 0 4px; margin-left: 0; }
   .panel .seg button:last-child { border-radius: 0 4px 4px 0; }
+  .panel .seg button.active { position: relative; z-index: 1; }  /* its outline sits over the neighbours it overlaps */
   .panel .option { margin-top: 8px; color: #aaa; }
   .panel .capture-size { margin: 8px 0 0; color: #ccc; font-variant-numeric: tabular-nums; }
   .panel .capture-size.warn { color: #fc6; }
