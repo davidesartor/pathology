@@ -35,6 +35,10 @@
   .panel .seg button { flex: 1; min-width: 0; padding: 3px 2px; border-radius: 0; margin-left: -1px; }
   .panel .seg button:first-child { border-radius: 4px 0 0 4px; margin-left: 0; }
   .panel .seg button:last-child { border-radius: 0 4px 4px 0; }
+  .panel .seg input { flex: 1; min-width: 0; font: inherit; color: inherit; text-align: center; background: #333; border: 1px solid #555; border-radius: 0 4px 4px 0; margin-left: -1px; padding: 3px 2px; }
+  .panel .seg input:focus { outline: none; border-color: #0ff; position: relative; z-index: 1; }
+  .panel .seg input.active { background: #066; border-color: #0ff; position: relative; z-index: 1; }
+  .panel .seg input:disabled { opacity: 0.5; }
   .panel .seg button.active { position: relative; z-index: 1; }  /* its outline sits over the neighbours it overlaps */
   .panel .option { margin-top: 8px; color: #aaa; }
   .panel .capture-size { margin: 8px 0 0; color: #ccc; font-variant-numeric: tabular-nums; }
@@ -91,7 +95,7 @@
       <div class="option">Shape</div>
       <div class="seg" data-part="capture-shape"><button data-value="free">Free</button><button data-value="1:1">1:1</button><button data-value="4:3">4:3</button><button data-value="3:2">3:2</button><button data-value="16:9">16:9</button><button data-part="capture-turn" title="swap width and height">⤾</button></div>
       <div class="option">Width (µm)</div>
-      <div class="seg" data-part="capture-width"><button data-value="100">100</button><button data-value="250">250</button><button data-value="500">500</button><button data-value="1000">1000</button><button data-value="2000">2000</button></div>
+      <div class="seg" data-part="capture-width"><button data-value="100">100</button><button data-value="500">500</button><button data-value="1000">1000</button><button data-value="5000">5000</button><input type="text" inputmode="decimal" data-part="capture-width-custom" placeholder="other" title="any width in µm; Enter sets it"></div>
       <div class="option">Scale bar</div>
       <div class="seg" data-part="capture-corner"><button data-value="top-left" title="top left">↖</button><button data-value="top-right" title="top right">↗</button><button data-value="bottom-left" title="bottom left">↙</button><button data-value="bottom-right" title="bottom right">↘</button><button data-value="none">None</button></div>
       <p class="capture-size" data-part="capture-size"></p>
@@ -1040,10 +1044,16 @@ function createPane(index) {
   const showCaptureSettings = () => {
     for (const button of part("capture-shape").querySelectorAll("[data-value]")) button.classList.toggle("active", button.dataset.value === captureSettings.shape);
     part("capture-turn").classList.toggle("active", captureSettings.portrait);
-    for (const button of part("capture-width").children) {
+    const presetWidths = [...part("capture-width").querySelectorAll("button")];
+    for (const button of presetWidths) {
       button.disabled = !slide?.mpp;
       button.classList.toggle("active", !!slide?.mpp && Number(button.dataset.value) === captureSettings.width);
     }
+    // a width that is no preset shows in the custom box
+    const custom = part("capture-width-custom"), isCustom = !!captureSettings.width && !presetWidths.some(button => Number(button.dataset.value) === captureSettings.width);
+    custom.disabled = !slide?.mpp;
+    custom.classList.toggle("active", !!slide?.mpp && isCustom);
+    if (document.activeElement !== custom) custom.value = isCustom ? captureSettings.width : "";
     for (const button of part("capture-corner").children) button.classList.toggle("active", button.dataset.value === captureSettings.corner);
   };
   const changeCaptureSettings = change => {
@@ -1069,7 +1079,7 @@ function createPane(index) {
     draw();
   });
   // a second press on the chosen width lets the frame be any width again
-  for (const button of part("capture-width").children) {
+  for (const button of part("capture-width").querySelectorAll("button")) {
     button.addEventListener("click", () => {
       const width = Number(button.dataset.value);
       changeCaptureSettings({width: captureSettings.width === width ? null : width});
@@ -1077,6 +1087,14 @@ function createPane(index) {
       draw();
     });
   }
+  // a custom width is set on Enter or leaving the box; an empty box lets the frame be any width
+  part("capture-width-custom").addEventListener("change", event => {
+    const width = parseFloat(event.target.value.replace(",", "."));
+    changeCaptureSettings({width: width > 0 ? width : null});
+    applyFrameWidth();
+    draw();
+  });
+  part("capture-width-custom").addEventListener("keydown", event => { if (event.key === "Enter") event.target.blur(); });
   for (const button of part("capture-corner").children) button.addEventListener("click", () => changeCaptureSettings({corner: button.dataset.value}));
   showCaptureSettings();
   pane.showCaptureSettings = showCaptureSettings;

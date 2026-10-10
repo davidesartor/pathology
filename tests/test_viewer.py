@@ -84,7 +84,7 @@ def test_capture_frame_keeps_its_shape_and_settings(viewer: Page, tiffs):
 
 
 def test_capture_preset_width(viewer: Page, tiffs):
-    """A preset width spans that much tissue, zooming out to fit; resizing by hand lets it go."""
+    """A preset or typed width spans that much tissue, zooming out to fit; resizing by hand lets it go."""
     open_files(viewer, tiffs["ome_zlib"][0])
     viewer.evaluate("viewer.viewport.zoomTo(viewer.viewport.imageToViewportZoom(1), null, true)")
     viewer.click("#capture")
@@ -97,6 +97,10 @@ def test_capture_preset_width(viewer: Page, tiffs):
     corner = (rect[0] / 2 + 0.45 * rect[0], rect[1] / 2 + 0.45 * rect[0] * 3 / 4)
     drag(viewer, corner, (corner[0] - 100, corner[1] - 75))
     assert viewer.locator("#capture-width .active").count() == 0
+    viewer.fill("#capture-width-custom", "300")
+    viewer.press("#capture-width-custom", "Enter")
+    assert viewer.locator("#capture-size").text_content().startswith("1,200 × 900 px · 300 µm × 225 µm")
+    assert viewer.locator("#capture-width .active").get_attribute("data-part") == "capture-width-custom"
 
 
 def test_zoom_presets(viewer: Page, tiffs):
