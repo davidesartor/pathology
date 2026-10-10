@@ -92,8 +92,6 @@
       <div class="seg" data-part="capture-shape"><button data-value="free">Free</button><button data-value="1:1">1:1</button><button data-value="4:3">4:3</button><button data-value="3:2">3:2</button><button data-value="16:9">16:9</button><button data-part="capture-turn" title="swap width and height">⤾</button></div>
       <div class="option">Scale bar</div>
       <div class="seg" data-part="capture-corner"><button data-value="top-left" title="top left">↖</button><button data-value="top-right" title="top right">↗</button><button data-value="bottom-left" title="bottom left">↙</button><button data-value="bottom-right" title="bottom right">↘</button><button data-value="none">None</button></div>
-      <div class="option">With it</div>
-      <div class="seg" data-part="capture-extras"><button data-value="magnification" title="the capture's magnification">Zoom ×</button><button data-value="name" title="the slide's name">Slide name</button><button data-value="pixel" title="the capture's µm per pixel">Pixel size</button></div>
       <p class="capture-size" data-part="capture-size"></p>
       <div class="buttons"><button data-part="capture-save">Save PNG</button></div>
     </div>
@@ -524,11 +522,11 @@ const CLOSE_DISTANCE = 10;  // screen px from the first corner within which a cl
 const TRACE_STEP = 4;  // screen px between traced points
 
 function strokeOutline(ctx, path, scale, color = AREA_COLOR) {
-  ctx.strokeStyle = "rgba(0, 0, 0, 0.7)";
-  ctx.lineWidth = 6 / scale;
+  ctx.strokeStyle = "rgba(0, 0, 0, 0.5)";
+  ctx.lineWidth = 3.5 / scale;
   ctx.stroke(path);
   ctx.strokeStyle = color;
-  ctx.lineWidth = 3 / scale;
+  ctx.lineWidth = 1.5 / scale;
   ctx.stroke(path);
 }
 
@@ -536,7 +534,6 @@ function strokeOutline(ctx, path, scale, color = AREA_COLOR) {
 const roundMicrons = longest => [5, 2, 1].map(factor => factor * 10 ** Math.floor(Math.log10(longest))).find(length => length <= longest);
 const micronsText = microns => microns >= 1000 ? `${+(microns / 1000).toFixed(3)} mm` : `${+microns.toFixed(3)} µm`;
 // magnification as the zoom buttons and status line count it: 1× is 10 µm per px
-const magnificationText = micronsPerPx => `${+(10 / micronsPerPx).toFixed(1)}×`;
 const lineLength = (slide, [[x0, y0], [x1, y1]]) => {
   const px = Math.hypot(x1 - x0, y1 - y0);
   return slide.mpp ? micronsText(+(px * slide.mpp).toPrecision(3)) : `${Math.round(px)} px`;
@@ -544,8 +541,8 @@ const lineLength = (slide, [[x0, y0], [x1, y1]]) => {
 
 // text upright at (x, y) in output px, outlined in black
 function outlinedText(ctx, text, x, y, color, size) {
-  ctx.lineWidth = 4 * size;
-  ctx.strokeStyle = "rgba(0, 0, 0, 0.8)";
+  ctx.lineWidth = 2.5 * size;
+  ctx.strokeStyle = "rgba(0, 0, 0, 0.7)";
   ctx.strokeText(text, x, y);
   ctx.fillStyle = color;
   ctx.fillText(text, x, y);
@@ -555,7 +552,7 @@ function outlinedText(ctx, text, x, y, color, size) {
 // with end ticks, its length (after its name, if any) beside its middle; `size` output px per screen px
 function drawHighlights(ctx, slide, toOutput, size) {
   ctx.lineJoin = ctx.lineCap = "round";
-  ctx.font = `bold ${14 * size}px system-ui, sans-serif`;
+  ctx.font = `500 ${13 * size}px system-ui, sans-serif`;
   for (const area of slide.areas) {
     const ring = area.ring.map(([x, y]) => toOutput.transformPoint({x, y}));
     const path = new Path2D();
@@ -587,30 +584,27 @@ function drawHighlights(ctx, slide, toOutput, size) {
   }
 }
 
-// a capture's chosen corner: a black scale bar of a round length, at most a quarter of its width, its length above it
-// and the chosen extras above that. `toOutput` places the capture's px, for the preview on screen
-function drawCaption(ctx, slide, width, height, downsample, {corner, extras}, toOutput = new DOMMatrix()) {
+// a capture's chosen corner: a black scale bar of a round length, at most a quarter of its width, its length above it.
+// `toOutput` places the capture's px, for the preview on screen
+function drawCaption(ctx, slide, width, height, downsample, {corner}, toOutput = new DOMMatrix()) {
   if (!slide.mpp || corner === "none") return;
   const size = Math.max(1, Math.max(width, height) / 1000);
   const micronsPerPx = slide.mpp * downsample;
   const microns = roundMicrons(0.25 * width * micronsPerPx);
-  const barWidth = microns / micronsPerPx, barHeight = 3 * size, pad = 12 * size, lineHeight = 16 * size;
-  const lines = [
-    extras.includes("name") && slide.name,
-    extras.includes("magnification") && magnificationText(micronsPerPx),
-    extras.includes("pixel") && `${+micronsPerPx.toPrecision(4)} µm/px`,
-    micronsText(microns),
-  ].filter(Boolean);
+  const barWidth = microns / micronsPerPx, barHeight = 3 * size, pad = 12 * size, textHeight = 16 * size;
   const [right, bottom] = [corner.endsWith("right"), corner.startsWith("bottom")];
-  const blockHeight = lines.length * lineHeight + barHeight;
-  const [x, top] = [right ? width - pad : pad, bottom ? height - pad - blockHeight : pad];
+  const [x, top] = [right ? width - pad : pad, bottom ? height - pad - textHeight - barHeight : pad];
   ctx.setTransform(toOutput);
-  ctx.font = `${13 * size}px system-ui, sans-serif`;
+  ctx.font = `600 ${13 * size}px system-ui, sans-serif`;
   ctx.textAlign = right ? "right" : "left";
   ctx.textBaseline = "middle";
   ctx.fillStyle = "#000";
-  lines.forEach((line, i) => ctx.fillText(line, x, top + (i + 0.4) * lineHeight));
-  ctx.fillRect(right ? x - barWidth : x, top + lines.length * lineHeight, barWidth, barHeight);
+  ctx.fillText(micronsText(microns), x, top + 0.4 * textHeight);
+  const [barLeft, barTop] = [right ? x - barWidth : x, top + textHeight];
+  ctx.fillRect(barLeft, barTop, barWidth, barHeight);
+  // small bars across the ends
+  const [tickWidth, tickHeight] = [2 * size, 3 * barHeight];
+  for (const tickLeft of [barLeft, barLeft + barWidth - tickWidth]) ctx.fillRect(tickLeft, barTop + (barHeight - tickHeight) / 2, tickWidth, tickHeight);
 }
 
 // a capture is saved as it looks on screen: turned and mirrored as the view is, at full resolution unless the browser cannot hold it
@@ -686,8 +680,8 @@ async function saveImage(suggestedName, render) {
   }
 }
 
-// the last capture's shape, size (slide px), corner and extras, for the next
-const captureSettings = {shape: "free", portrait: false, size: null, corner: "bottom-left", extras: []};
+// the last capture's shape, size (slide px) and corner, for the next
+const captureSettings = {shape: "free", portrait: false, size: null, corner: "bottom-left"};
 try { Object.assign(captureSettings, JSON.parse(localStorage.getItem("capture-settings"))); } catch {}
 
 // the info box opens as it was last left, or open on wide screens
@@ -1031,7 +1025,6 @@ function createPane(index) {
     for (const button of part("capture-shape").querySelectorAll("[data-value]")) button.classList.toggle("active", button.dataset.value === captureSettings.shape);
     part("capture-turn").classList.toggle("active", captureSettings.portrait);
     for (const button of part("capture-corner").children) button.classList.toggle("active", button.dataset.value === captureSettings.corner);
-    for (const button of part("capture-extras").children) button.classList.toggle("active", captureSettings.extras.includes(button.dataset.value));
   };
   const changeCaptureSettings = change => {
     Object.assign(captureSettings, change);
@@ -1054,10 +1047,6 @@ function createPane(index) {
     draw();
   });
   for (const button of part("capture-corner").children) button.addEventListener("click", () => changeCaptureSettings({corner: button.dataset.value}));
-  for (const button of part("capture-extras").children) {
-    const extra = button.dataset.value;
-    button.addEventListener("click", () => changeCaptureSettings({extras: captureSettings.extras.includes(extra) ? captureSettings.extras.filter(other => other !== extra) : [...captureSettings.extras, extra]}));
-  }
   showCaptureSettings();
   pane.showCaptureSettings = showCaptureSettings;
   function saveFrame() {
@@ -1139,7 +1128,7 @@ function createPane(index) {
     const turn = viewTurn(viewer), box = turnedBox(area.ring, turn), downsample = imageDownsample(box);
     const [x, y] = [Math.round(Math.max(0, Math.min(...area.ring.map(([x]) => x)))), Math.round(Math.max(0, Math.min(...area.ring.map(([, y]) => y))))];
     const name = `${slide.name}_x${x}_y${y}${downsample > 1 ? `_1to${downsample}` : ""}.png`;
-    const captured = slide, scale = screenScale(), caption = {corner: captureSettings.corner, extras: [...captureSettings.extras]};
+    const captured = slide, scale = screenScale(), caption = {corner: captureSettings.corner};
     try {
       await saveImage(name, async () => {
         const {canvas} = await renderArea(captured, area, turn, scale, caption, fraction => setLoading(`reading the capture: ${Math.round(fraction * 100)}%`));

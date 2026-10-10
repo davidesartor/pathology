@@ -66,20 +66,18 @@ def test_capture_saves_what_is_on_screen(viewer: Page, tiffs, rotation, flip):
 
 
 def test_capture_frame_keeps_its_shape_and_settings(viewer: Page, tiffs):
-    """A fixed shape holds while resizing; shape, corner and extras come back on the next visit."""
+    """A fixed shape holds while resizing; shape and corner come back on the next visit."""
     open_files(viewer, tiffs["ome_zlib"][0])
     viewer.click("#capture")
     viewer.click("#capture-shape [data-value='4:3']")
     drag(viewer, (800, 640), (900, 700))
     viewer.click("#capture-corner [data-value='top-right']")
-    viewer.click("#capture-extras [data-value='name']")
     assert viewer.evaluate("JSON.parse(localStorage.getItem('capture-settings')).size") is None  # kept only once a capture is saved
     viewer.reload()
     open_files(viewer, tiffs["ome_zlib"][0])
     viewer.click("#capture")
     assert viewer.locator("#capture-shape .active").get_attribute("data-value") == "4:3"
     assert viewer.locator("#capture-corner .active").get_attribute("data-value") == "top-right"
-    assert viewer.locator("#capture-extras .active").get_attribute("data-value") == "name"
     size = viewer.locator("#capture-size").text_content()
     width, height = (int(n.replace(",", "")) for n in size.split(" px")[0].split(" × "))
     assert abs(width / height - 4 / 3) < 0.01, size
