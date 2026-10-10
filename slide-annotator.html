@@ -1909,6 +1909,16 @@ async function mrxsFolders(folder, files) {
   }
   return found;
 }
+// a dropped folder's files and MRXS slides, read through its handle where there is one: on a page opened from a file Chrome refuses the older entry API
+async function droppedFolder(handle, entry) {
+  if (handle?.kind !== "directory") { const files = await folderFiles(entry); return {name: entry.name, files, mrxs: await mrxsFolders(entry, files)}; }
+  const files = await handleFiles(handle);
+  if (hasSlidedat(files)) return {name: handle.name, files, mrxs: [mrxsEntry(handle.name, files)]};
+  const mrxs = [];
+  for await (const inner of handle.values())
+    if (inner.kind === "directory" && await inner.getFileHandle("Slidedat.ini").then(() => true, () => false)) mrxs.push(mrxsEntry(inner.name, await handleFiles(inner)));
+  return {name: handle.name, files, mrxs};
+}
 window.addEventListener("dragenter", event => { if (event.dataTransfer.types.includes("Files")) $("drop").hidden = false; });
 window.addEventListener("dragover", event => event.preventDefault());
 window.addEventListener("drop", event => event.preventDefault());
@@ -1921,8 +1931,7 @@ $("drop").addEventListener("drop", async event => {
   await addSlideFiles(dropped.map(([, , file]) => file).filter(file => file && isTIFF(file.name)));
   for (const [handlePromise, entry, file] of dropped.filter(([, , file]) => !(file && isTIFF(file.name)))) {
     const handle = await handlePromise;
-    const files = entry?.isDirectory ? await folderFiles(entry) : [];
-    const mrxs = entry?.isDirectory ? await mrxsFolders(entry, files) : [];
+    const {files, mrxs} = entry?.isDirectory ? await droppedFolder(handle, entry) : {files: [], mrxs: []};
     if (files.some(file => isTIFF(file.name)) || mrxs.length) addSlideFiles(files, entry.name, mrxs);
     else if (file && /\.mrxs$/i.test(file.name)) { if (!dropped.some(([, entry]) => entry?.isDirectory)) addSlideFiles([file]); }
     else if (handle?.kind === "directory") watchFolderHandle(handle);

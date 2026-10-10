@@ -1481,6 +1481,16 @@ async function mrxsFolders(folder, files) {
   }
   return found;
 }
+// a dropped folder's files and MRXS slides, read through its handle where there is one: on a page opened from a file Chrome refuses the older entry API
+async function droppedFolder(handle, entry) {
+  if (handle?.kind !== "directory") { const files = await folderFiles(entry); return {name: entry.name, files, mrxs: await mrxsFolders(entry, files)}; }
+  const files = await handleFiles(handle);
+  if (hasSlidedat(files)) return {name: handle.name, files, mrxs: [mrxsEntry(handle.name, files)]};
+  const mrxs = [];
+  for await (const inner of handle.values())
+    if (inner.kind === "directory" && await inner.getFileHandle("Slidedat.ini").then(() => true, () => false)) mrxs.push(mrxsEntry(inner.name, await handleFiles(inner)));
+  return {name: handle.name, files, mrxs};
+}
 const paneAt = (x, y) => panes.find(pane => { const rect = pane.root.getBoundingClientRect(); return !pane.root.hidden && x >= rect.left && x < rect.right && y >= rect.top && y < rect.bottom; }) ?? panes[0];
 window.addEventListener("dragenter", event => { if (event.dataTransfer.types.includes("Files")) $("drop").hidden = false; });
 window.addEventListener("dragover", event => event.preventDefault());
@@ -1490,14 +1500,14 @@ $("drop").addEventListener("drop", async event => {
   $("drop").hidden = true;
   const pane = paneAt(event.clientX, event.clientY);
   // every item must be read before the first await, after which the drop data is gone
-  const dropped = [...event.dataTransfer.items].map(item => [item.webkitGetAsEntry(), item.getAsFile()]);
-  const files = dropped.map(([, file]) => file).filter(file => file && isTIFF(file.name));
+  const dropped = [...event.dataTransfer.items].map(item => [item.getAsFileSystemHandle?.().catch(() => null), item.webkitGetAsEntry(), item.getAsFile()]);
+  const files = dropped.map(([, , file]) => file).filter(file => file && isTIFF(file.name));
   if (files.length) await addSlideFiles(files, undefined, [], pane);
-  for (const [entry, file] of dropped.filter(([, file]) => !(file && isTIFF(file.name)))) {
+  for (const [handle, entry, file] of dropped.filter(([, , file]) => !(file && isTIFF(file.name)))) {
     if (entry?.isDirectory) {
-      const inner = await folderFiles(entry);
-      addSlideFiles(inner, entry.name, await mrxsFolders(entry, inner), pane);
-    } else if (file && !dropped.some(([entry]) => entry?.isDirectory)) addSlideFiles([file], file.name, [], pane);
+      const folder = await droppedFolder(await handle, entry);
+      addSlideFiles(folder.files, folder.name, folder.mrxs, pane);
+    } else if (file && !dropped.some(([, entry]) => entry?.isDirectory)) addSlideFiles([file], file.name, [], pane);
   }
 });
 </script>
