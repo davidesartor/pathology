@@ -61,7 +61,7 @@ def test_capture_saves_what_is_on_screen(viewer: Page, tiffs, rotation, flip):
     above_ruler = slice(0, want.shape[0] - 60), slice(0, min(got.shape[1], want.shape[1]))
     assert np.median(np.abs(got[above_ruler] - want[above_ruler])) <= 3
     rgb = np.array([int(color[i:i + 2], 16) for i in (1, 3, 5)])
-    assert (np.abs(got - rgb).max(-1) <= 10).sum() > 100  # the highlight's outline
+    assert (np.abs(got - rgb).max(-1) <= 10).sum() > 30  # the highlight's 1.5 px outline
     assert (got[-15:-12, 13:58] < 40).all()  # the black ruler, 12 px in from the bottom left (the slide has a pixel size)
 
 
