@@ -57,6 +57,25 @@
   .disclaimer a { color: inherit; }
   .disclaimer form { margin: 0; text-align: right; }
   .disclaimer button { font: inherit; color: inherit; background: #066; border: 1px solid #0ff; border-radius: 4px; padding: 4px 14px; cursor: pointer; }
+  #panel .row { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+  #panel .row > span { color: #aaa; }
+  #panel .seg { flex: 1; display: flex; }
+  #panel .seg button { flex: 1; min-width: 0; padding: 3px 2px; border-radius: 0; margin-left: -1px; }
+  #panel .seg button:first-child { border-radius: 4px 0 0 4px; margin-left: 0; }
+  #panel .seg button:last-child { border-radius: 0 4px 4px 0; }
+  #panel .seg button.active { position: relative; z-index: 1; }
+  .calibration form { display: flex; gap: 6px; justify-content: flex-end; }
+  .calibration form button:not([value=save]), .calibration .seg button { background: #333; border-color: #555; }
+  .calibration .seg { display: flex; }
+  .calibration .seg button { flex: 1; padding: 3px 2px; border-radius: 0; margin-left: -1px; }
+  .calibration .seg button:first-child { border-radius: 4px 0 0 4px; margin-left: 0; }
+  .calibration .seg button:last-child { border-radius: 0 4px 4px 0; }
+  .calibration .seg button.active { position: relative; background: #066; border-color: #0ff; }
+  .calibration .reference { height: 160px; display: grid; place-items: center; }
+  #calibration-shape { box-sizing: border-box; border: 1.5px solid #fff; }
+  #calibration-shape.ruler { height: 14px; border-top: none; }
+  .calibration input { width: 100%; }
+  #calibration-value { margin: 6px 0 14px; color: #aaa; font-variant-numeric: tabular-nums; }
 </style>
 </head>
 <body>
@@ -64,6 +83,15 @@
   <h2>Research use only</h2>
   <p>Not for diagnosis or clinical decisions. Provided as is, without warranty. <a href="https://github.com/davidesartor/pathology#disclaimer" target="_blank" rel="noopener">Details</a></p>
   <form method="dialog"><button autofocus>I understand</button></form>
+</dialog>
+<dialog class="disclaimer calibration" id="calibration">
+  <h2>Calibrate screen</h2>
+  <p>Hold one of these against the screen and slide until the outline matches it. The longer it is, the more precise.</p>
+  <div class="seg" id="calibration-reference"><button data-value="cm">1 cm</button><button data-value="inch">1 inch</button><button data-value="usbc" title="the metal tip of a USB-C plug">USB-C</button><button data-value="lightning" title="the tip of a Lightning plug">Lightning</button></div>
+  <div class="reference"><div id="calibration-shape"></div></div>
+  <input type="range" id="calibration-scale" min="2.5" max="10" step="0.005">
+  <p id="calibration-value"></p>
+  <form method="dialog"><button value="default">Default</button><button value="cancel">Cancel</button><button value="save" autofocus>Save</button></form>
 </dialog>
 <div id="viewer"></div>
 <div id="viewer2" hidden></div>
@@ -82,6 +110,10 @@
     <label title="turns the view about its centre; slide px, ROIs and nuclei are unchanged. Double-click to straighten">rotate <input id="rotation" type="range" min="-180" max="180" step="1" value="0"><span id="rotation-value" class="count">0°</span></label>
     <button id="flip" title="mirrors the view left to right">Flip</button>
   </div>
+  <div class="row" title="the magnification counts as through a microscope objective: the slide on screen, seen from 25 cm, looks as big as through this eyepiece">
+    <span>Eyepiece</span><div class="seg" id="eyepiece-power"><button data-value="10">10×</button><button data-value="12.5">12.5×</button><button data-value="15">15×</button><button data-value="20">20×</button></div>
+  </div>
+  <div class="buttons"><button id="calibrate" title="match a ruler or a plug held against the screen, so the magnification knows the screen's pixel size">Calibrate screen</button></div>
   <div class="buttons" id="roi-buttons">
     <button id="draw-roi" title="draw regions on this slide">Draw ROI</button>
     <button id="load-roi" title="add the regions in a GeoJSON file (e.g. saved ROIs or QuPath annotations) to this slide's ROIs">Load ROI</button>
@@ -2193,6 +2225,61 @@ let zoomText = "";
 
 const draw = () => panes.forEach(drawPane);
 
+// the eyepiece the magnification counts through, as the viewer keeps it (its field settings are the viewer's)
+const eyepiece = {power: 10};
+try { Object.assign(eyepiece, JSON.parse(localStorage.getItem("eyepiece"))); } catch {}
+const showEyepiece = () => { for (const button of $("eyepiece-power").children) button.classList.toggle("active", Number(button.dataset.value) === eyepiece.power); };
+for (const button of $("eyepiece-power").children) {
+  button.addEventListener("click", () => {
+    eyepiece.power = Number(button.dataset.value);
+    try { localStorage.setItem("eyepiece", JSON.stringify(eyepiece)); } catch {}
+    showEyepiece();
+    draw();
+  });
+}
+showEyepiece();
+
+// the screen's mm per CSS px: as calibrated (kept per device px, so it holds when the page is zoomed),
+// else typical for the device: Android's dp, Apple's default display scaling, CSS's 1/96 inch
+const typicalScreen = (() => {
+  const agent = navigator.userAgent;
+  if (/Android/.test(agent)) return {mm: 25.4 / 160, device: "Android"};
+  if (/iPhone/.test(agent)) return {mm: 0.16, device: "an iPhone"};
+  if (/Macintosh/.test(agent) && navigator.maxTouchPoints > 1) return {mm: 25.4 / 132, device: "an iPad"};
+  if (/Macintosh/.test(agent)) return {mm: 0.198, device: "a Mac"};
+  return {mm: 25.4 / 96, device: "a desktop screen"};
+})();
+let calibratedMmPerDevicePx = null;
+try { calibratedMmPerDevicePx = Number(localStorage.getItem("screen-mm-per-device-px")) || null; } catch {}
+const screenMmPerPx = () => calibratedMmPerDevicePx ? calibratedMmPerDevicePx * (window.devicePixelRatio || 1) : typicalScreen.mm;
+
+// calibration: the outline of a ruler length or a plug's tip, sized by a slider in screen px per mm
+const REFERENCES = {cm: {width: 10}, inch: {width: 25.4}, usbc: {width: 8.25, height: 2.4, round: 1.2}, lightning: {width: 6.7, height: 1.5, round: 0.3}};
+let calibrationReference = "inch";
+function showCalibration() {
+  const pxPerMm = Number($("calibration-scale").value), {width, height, round} = REFERENCES[calibrationReference];
+  for (const button of $("calibration-reference").children) button.classList.toggle("active", button.dataset.value === calibrationReference);
+  $("calibration-shape").className = height ? "" : "ruler";
+  Object.assign($("calibration-shape").style, {width: `${width * pxPerMm}px`, height: height ? `${height * pxPerMm}px` : "", borderRadius: round ? `${round * pxPerMm}px` : ""});
+  const unchanged = Math.abs(1 / pxPerMm - screenMmPerPx()) < 5e-4;
+  $("calibration-value").textContent = `${(1 / pxPerMm).toFixed(4)} mm per screen px` + (!unchanged ? "" : calibratedMmPerDevicePx ? ", as calibrated" : `, typical for ${typicalScreen.device}`);
+}
+$("calibrate").addEventListener("click", () => {
+  $("calibration-scale").value = 1 / screenMmPerPx();
+  showCalibration();
+  $("calibration").returnValue = "";  // Esc keeps the last answer
+  $("calibration").showModal();
+});
+for (const button of $("calibration-reference").children) button.addEventListener("click", () => { calibrationReference = button.dataset.value; showCalibration(); });
+$("calibration-scale").addEventListener("input", showCalibration);
+$("calibration").addEventListener("close", () => {
+  const answer = $("calibration").returnValue;
+  if (answer !== "save" && answer !== "default") return;
+  calibratedMmPerDevicePx = answer === "save" ? 1 / Number($("calibration-scale").value) / (window.devicePixelRatio || 1) : null;
+  try { answer === "save" ? localStorage.setItem("screen-mm-per-device-px", calibratedMmPerDevicePx) : localStorage.removeItem("screen-mm-per-device-px"); } catch {}
+  draw();
+});
+
 // a cleared canvas the size of the pane's overlay, with its transform, for drawing before compositing
 function paneScratch(pane, name) {
   const {ctx} = pane, scratch = pane[name] ??= document.createElement("canvas").getContext("2d");
@@ -2345,7 +2432,8 @@ function drawPane(pane) {
     ctx.stroke();
   }
   $("hint").hidden = !(nucleiTooSmall && layers.some(layer => [...layer.classes.values()].some(cls => cls.detection && cls.visible)));
-  zoomText = slide.mpp ? `${(scale * 10 / slide.mpp).toFixed(1)}×` : `${scale.toFixed(2)} screen px/px`;
+  // as through an objective of this power: the screen from 25 cm, where the eyepiece puts its image, looks like the eyepiece
+  zoomText = slide.mpp ? `${(scale * screenMmPerPx() * 1000 / eyepiece.power / slide.mpp).toFixed(1)}×` : `${scale.toFixed(2)} screen px/px`;
   $("status").textContent = [cursorText, zoomText].filter(Boolean).join("  ·  ");
   renderInfo(scale);
 }

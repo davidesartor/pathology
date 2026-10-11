@@ -111,3 +111,16 @@ def test_overlay_follows_view(annotator: Page, tiffs, tmp_path, rotation, flip):
     assert len(xs) > 100
     slide_x, slide_y = pointer_at(annotator, round(xs.mean()), round(ys.mean()))
     assert abs(slide_x - 2550) <= 4 and abs(slide_y - 1600) <= 4, (slide_x, slide_y)
+
+
+def test_calibration_sets_magnification(annotator: Page, tiffs):
+    """Calibrated to 0.25 mm per screen px and shared with the viewer: 1 screen px per 0.25 µm slide px is 100× through a 10× eyepiece."""
+    open_files(annotator, tiffs["ome_zlib"][0])
+    annotator.evaluate("viewer.viewport.zoomTo(viewer.viewport.imageToViewportZoom(1), null, true)")
+    annotator.click("#eyepiece-power [data-value='10']")
+    annotator.click("#calibrate")
+    annotator.locator("#calibration-scale").fill("4")
+    annotator.click("#calibration button[value=save]")
+    wait_for(annotator, "$('status').textContent.includes('100.0×')")
+    assert annotator.evaluate("localStorage.getItem('screen-mm-per-device-px')") == "0.25"
+    assert json.loads(annotator.evaluate("localStorage.getItem('eyepiece')"))["power"] == 10
