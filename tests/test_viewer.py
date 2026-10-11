@@ -4,7 +4,7 @@ import pytest
 from PIL import Image
 from playwright.sync_api import Page
 
-from conftest import open_files, set_view
+from conftest import open_files, set_view, settle, wait_for
 from test_slides import screenshot
 
 
@@ -101,17 +101,18 @@ def test_capture_size_in_microns(viewer: Page, tiffs):
     before = viewer.input_value("#capture-width")
     rect = viewer.evaluate("(() => { const s = viewer.viewport.getContainerSize(); return [s.x, s.y]; })()")
     scale = viewer.evaluate("viewer.viewport.viewportToImageZoom(viewer.viewport.getZoom(true))")
-    corner = (rect[0] / 2 + 1000 * scale, rect[1] / 2 + 200 * scale)
-    drag(viewer, corner, (corner[0] - 100, corner[1]))
+    corner = (rect[0] / 2 - 1000 * scale, rect[1] / 2 - 200 * scale)  # top left, clear of the panel
+    drag(viewer, corner, (corner[0] + 100, corner[1]))
     assert viewer.input_value("#capture-width") != before
 
 
 def test_zoom_presets(viewer: Page, tiffs):
-    """10× is 1 µm per screen px; the slide is 0.25 µm per px."""
+    """Through a 10× eyepiece, 10× shows the slide (0.25 µm per px) at its true size times 100 on screen."""
     open_files(viewer, tiffs["ome_zlib"][0])
     viewer.click("#zoom [data-zoom='10']")
     viewer.wait_for_timeout(1500)  # the zoom animates
-    assert abs(viewer.evaluate("viewer.viewport.viewportToImageZoom(viewer.viewport.getZoom(true))") - 0.25) < 0.005
+    want = 0.25e-3 * 100 / viewer.evaluate("screenMmPerPx()")  # screen px per slide px
+    assert abs(viewer.evaluate("viewer.viewport.viewportToImageZoom(viewer.viewport.getZoom(true))") / want - 1) < 0.02
     assert viewer.locator("#zoom .active").get_attribute("data-zoom") == "10"
 
 
@@ -128,3 +129,41 @@ def test_measure_line(viewer: Page, tiffs):
     assert first["kind"] == "line" and abs(np.hypot(*np.diff(first["ring"], axis=0)[0]) - 200) <= 1
     assert second["ring"][0][1] == second["ring"][1][1]  # level
     assert viewer.locator("#areas .area .count").first.text_content() == "50 µm"
+
+
+def test_microscope_field_sets_magnification(viewer: Page, tiffs):
+    """With the field on, 40× through a 10×/22 eyepiece shows a 0.55 mm circle, the slide dimmed outside it."""
+    open_files(viewer, tiffs["ome_zlib"][0])
+    viewer.click("#zoom [data-zoom='40']")
+    settle(viewer)
+    plain = screenshot(viewer, view_only=True).astype(int)
+    viewer.click("#field")
+    viewer.click("#field-number [data-value='22']")
+    viewer.click("#zoom [data-zoom='40']")
+    wait_for(viewer, "$('status').textContent.includes('40.0×, field ⌀ 550 µm')")
+    settle(viewer)
+    assert viewer.locator("#zoom .active").get_attribute("data-zoom") == "40"
+    # the circle is 90% of the 800 px height: the centre is lit, the left edge dimmed
+    dimmed = screenshot(viewer, view_only=True).astype(int)
+    assert dimmed[390:410, 490:510].mean() > 100 and dimmed[390:410, 20:60].mean() < 0.7 * plain[390:410, 20:60].mean()
+    viewer.reload()
+    assert viewer.evaluate("eyepiece.field") and viewer.locator("#field").get_attribute("class") == "active"
+
+
+def test_calibration_sets_magnification(viewer: Page, tiffs):
+    """Calibrated to 0.25 mm per screen px, 40× through a 10× eyepiece is 0.625 µm per screen px; Default forgets it."""
+    open_files(viewer, tiffs["ome_zlib"][0])
+    viewer.click("#calibrate")
+    viewer.click("#calibration-reference [data-value='usbc']")
+    assert abs(viewer.evaluate("$('calibration-shape').getBoundingClientRect().width") - 8.25 / viewer.evaluate("screenMmPerPx()")) < 0.5
+    viewer.locator("#calibration-scale").fill("4")
+    assert viewer.evaluate("$('calibration-shape').getBoundingClientRect().width") == 33
+    viewer.click("#calibration button[value=save]")
+    assert wait_for(viewer, "localStorage.getItem('screen-mm-per-device-px')") == "0.25"  # the dialog closes a task later
+    viewer.click("#eyepiece-power [data-value='10']")
+    viewer.click("#zoom [data-zoom='40']")
+    wait_for(viewer, "$('status').textContent.includes('40.0×')")
+    assert abs(viewer.evaluate("viewer.viewport.viewportToImageZoom(viewer.viewport.getZoom())") - 0.25 / 0.625) < 1e-3
+    viewer.click("#calibrate")
+    viewer.click("#calibration button[value=default]")
+    wait_for(viewer, "localStorage.getItem('screen-mm-per-device-px') === null")

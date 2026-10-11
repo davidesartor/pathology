@@ -41,6 +41,9 @@
   .panel .dims input:disabled { opacity: 0.5; }
   .panel .seg button.active { position: relative; z-index: 1; }  /* its outline sits over the neighbours it overlaps */
   .panel .option { margin-top: 8px; color: #aaa; }
+  .panel .row { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+  .panel .row > span { width: 58px; color: #aaa; }
+  .panel .row .seg { flex: 1; margin-top: 0; }
   .panel .capture-size { margin: 8px 0 0; color: #ccc; font-variant-numeric: tabular-nums; }
   .panel .capture-size.warn { color: #fc6; }
   .info { bottom: 8px; left: 8px; max-width: min(360px, calc(100% - 32px)); font-variant-numeric: tabular-nums; }
@@ -64,6 +67,18 @@
   .disclaimer a { color: inherit; }
   .disclaimer form { margin: 0; text-align: right; }
   .disclaimer button { font: inherit; color: inherit; background: #066; border: 1px solid #0ff; border-radius: 4px; padding: 4px 14px; cursor: pointer; }
+  .calibration form { display: flex; gap: 6px; justify-content: flex-end; }
+  .calibration form button:not([value=save]), .calibration .seg button { background: #333; border-color: #555; }
+  .calibration .seg { display: flex; }
+  .calibration .seg button { flex: 1; padding: 3px 2px; border-radius: 0; margin-left: -1px; }
+  .calibration .seg button:first-child { border-radius: 4px 0 0 4px; margin-left: 0; }
+  .calibration .seg button:last-child { border-radius: 0 4px 4px 0; }
+  .calibration .seg button.active { position: relative; background: #066; border-color: #0ff; }
+  .calibration .reference { height: 160px; display: grid; place-items: center; }
+  #calibration-shape { box-sizing: border-box; border: 1.5px solid #fff; }
+  #calibration-shape.ruler { height: 14px; border-top: none; }
+  .calibration input { width: 100%; }
+  #calibration-value { margin: 6px 0 14px; color: #aaa; font-variant-numeric: tabular-nums; }
 </style>
 </head>
 <body>
@@ -71,6 +86,15 @@
   <h2>Research use only</h2>
   <p>Not for diagnosis or clinical decisions. Provided as is, without warranty. <a href="https://github.com/davidesartor/pathology#disclaimer" target="_blank" rel="noopener">Details</a></p>
   <form method="dialog"><button autofocus>I understand</button></form>
+</dialog>
+<dialog class="disclaimer calibration" id="calibration">
+  <h2>Calibrate screen</h2>
+  <p>Hold one of these against the screen and slide until the outline matches it. The longer it is, the more precise.</p>
+  <div class="seg" id="calibration-reference"><button data-value="cm">1 cm</button><button data-value="inch">1 inch</button><button data-value="usbc" title="the metal tip of a USB-C plug">USB-C</button><button data-value="lightning" title="the tip of a Lightning plug">Lightning</button></div>
+  <div class="reference"><div id="calibration-shape"></div></div>
+  <input type="range" id="calibration-scale" min="2.5" max="10" step="0.005">
+  <p id="calibration-value"></p>
+  <form method="dialog"><button value="default">Default</button><button value="cancel">Cancel</button><button value="save" autofocus>Save</button></form>
 </dialog>
 <div id="panes"></div>
 <!-- one per pane; the first pane's parts also get their data-part as id -->
@@ -92,9 +116,15 @@
       <button data-part="split" title="a second pane on the right, with its own slide, view and tools">Side by side</button>
       <button data-part="link" title="pan, zoom, rotate and flip both panes together">Link views</button>
     </div>
-    <div class="seg" data-part="zoom" title="zoom to this magnification (10 µm per screen px at 1×)">
+    <div class="seg" data-part="zoom" title="zoom as through a microscope objective of this power: the slide on screen, seen from 25 cm, looks as big as through the eyepiece. With the microscope field on, the circle shows that objective's field">
       <button data-zoom="2.5">2.5×</button><button data-zoom="5">5×</button><button data-zoom="10">10×</button><button data-zoom="20">20×</button><button data-zoom="40">40×</button>
     </div>
+    <div class="row"><span title="the number before the slash on the eyepiece, e.g. 10 for 10×/22">Eyepiece</span><div class="seg" data-part="eyepiece-power"><button data-value="10">10×</button><button data-value="12.5">12.5×</button><button data-value="15">15×</button><button data-value="20">20×</button></div></div>
+    <div class="buttons">
+      <button data-part="field" title="dims the view outside a circle, as seen through the eyepiece; the magnifications then count how much of the slide the circle shows">Microscope field</button>
+      <button data-part="calibrate" title="match a ruler or a plug held against the screen, so the magnifications know the screen's pixel size">Calibrate screen</button>
+    </div>
+    <div class="row" data-part="field-settings" hidden><span title="the number after the slash on the eyepiece, e.g. 22 for 10×/22">Field no.</span><div class="seg" data-part="field-number"><button data-value="18">18</button><button data-value="20">20</button><button data-value="22">22</button><button data-value="25">25</button><button data-value="26.5">26.5</button></div></div>
     <div class="buttons" data-part="area-buttons">
       <button data-part="highlight" title="outline areas of interest on this slide, each in its own colour and with a name; captures show them">Highlight</button>
       <button data-part="measure" title="draw straight lines labelled with their length; captures show them">Measure</button>
@@ -557,7 +587,6 @@ function strokeOutline(ctx, path, scale, color = AREA_COLOR) {
 // a round length (1, 2 or 5 × 10ⁿ µm) no longer than `longest` µm
 const roundMicrons = longest => [5, 2, 1].map(factor => factor * 10 ** Math.floor(Math.log10(longest))).find(length => length <= longest);
 const micronsText = microns => microns >= 1000 ? `${+(microns / 1000).toFixed(3)} mm` : `${+microns.toFixed(3)} µm`;
-// magnification as the zoom buttons and status line count it: 1× is 10 µm per px
 const lineLength = (slide, [[x0, y0], [x1, y1]]) => {
   const px = Math.hypot(x1 - x0, y1 - y0);
   return slide.mpp ? micronsText(+(px * slide.mpp).toPrecision(3)) : `${Math.round(px)} px`;
@@ -708,6 +737,26 @@ async function saveImage(suggestedName, render) {
 const captureSettings = {shape: "free", portrait: false, size: null, corner: "bottom-left"};
 try { Object.assign(captureSettings, JSON.parse(localStorage.getItem("capture-settings"))); } catch {}
 
+// the simulated eyepiece, shared by both panes: its power, its field number (mm) and whether its field is shown,
+// as a circle across this share of the pane's shorter side
+const eyepiece = {power: 10, fieldNumber: 22, field: false};
+try { Object.assign(eyepiece, JSON.parse(localStorage.getItem("eyepiece"))); } catch {}
+const FIELD_FILL = 0.9;
+
+// the screen's mm per CSS px: as calibrated (kept per device px, so it holds when the page is zoomed),
+// else typical for the device: Android's dp, Apple's default display scaling, CSS's 1/96 inch
+const typicalScreen = (() => {
+  const agent = navigator.userAgent;
+  if (/Android/.test(agent)) return {mm: 25.4 / 160, device: "Android"};
+  if (/iPhone/.test(agent)) return {mm: 0.16, device: "an iPhone"};
+  if (/Macintosh/.test(agent) && navigator.maxTouchPoints > 1) return {mm: 25.4 / 132, device: "an iPad"};
+  if (/Macintosh/.test(agent)) return {mm: 0.198, device: "a Mac"};
+  return {mm: 25.4 / 96, device: "a desktop screen"};
+})();
+let calibratedMmPerDevicePx = null;
+try { calibratedMmPerDevicePx = Number(localStorage.getItem("screen-mm-per-device-px")) || null; } catch {}
+const screenMmPerPx = () => calibratedMmPerDevicePx ? calibratedMmPerDevicePx * (window.devicePixelRatio || 1) : typicalScreen.mm;
+
 // the info box opens as it was last left, or open on wide screens
 const infoOpen = () => { try { return (localStorage.getItem("slide-info-open") ?? String(innerWidth >= 700)) === "true"; } catch { return innerWidth >= 700; } };
 
@@ -725,6 +774,33 @@ const follow = (source, target) => {
 };
 const otherPane = pane => panes.find(other => other !== pane);
 const linkedTo = pane => linked && split ? otherPane(pane) : null;
+
+// calibration: the outline of a ruler length or a plug's tip, sized by a slider in screen px per mm
+const REFERENCES = {cm: {width: 10}, inch: {width: 25.4}, usbc: {width: 8.25, height: 2.4, round: 1.2}, lightning: {width: 6.7, height: 1.5, round: 0.3}};
+let calibrationReference = "inch";
+function showCalibration() {
+  const pxPerMm = Number($("calibration-scale").value), {width, height, round} = REFERENCES[calibrationReference];
+  for (const button of $("calibration-reference").children) button.classList.toggle("active", button.dataset.value === calibrationReference);
+  $("calibration-shape").className = height ? "" : "ruler";
+  Object.assign($("calibration-shape").style, {width: `${width * pxPerMm}px`, height: height ? `${height * pxPerMm}px` : "", borderRadius: round ? `${round * pxPerMm}px` : ""});
+  const unchanged = Math.abs(1 / pxPerMm - screenMmPerPx()) < 5e-4;
+  $("calibration-value").textContent = `${(1 / pxPerMm).toFixed(4)} mm per screen px` + (!unchanged ? "" : calibratedMmPerDevicePx ? ", as calibrated" : `, typical for ${typicalScreen.device}`);
+}
+function calibrateScreen() {
+  $("calibration-scale").value = 1 / screenMmPerPx();
+  showCalibration();
+  $("calibration").returnValue = "";  // Esc keeps the last answer
+  $("calibration").showModal();
+}
+for (const button of $("calibration-reference").children) button.addEventListener("click", () => { calibrationReference = button.dataset.value; showCalibration(); });
+$("calibration-scale").addEventListener("input", showCalibration);
+$("calibration").addEventListener("close", () => {
+  const answer = $("calibration").returnValue;
+  if (answer !== "save" && answer !== "default") return;
+  calibratedMmPerDevicePx = answer === "save" ? 1 / Number($("calibration-scale").value) / (window.devicePixelRatio || 1) : null;
+  try { answer === "save" ? localStorage.setItem("screen-mm-per-device-px", calibratedMmPerDevicePx) : localStorage.removeItem("screen-mm-per-device-px"); } catch {}
+  panes.forEach(pane => pane.showEyepiece());
+});
 
 function createPane(index) {
   const root = $("pane-template").content.firstElementChild.cloneNode(true);
@@ -857,8 +933,11 @@ function createPane(index) {
     draw();
   });
 
-  // preset magnifications, about the view's centre; they need the slide's pixel size
-  const zoomScale = magnification => magnification * slide.mpp / 10;  // screen px per slide px
+  // preset magnifications, about the view's centre; they need the slide's pixel size. An objective's power:
+  // the screen from 25 cm (where the eyepiece puts its image) looks like the eyepiece, or the circle shows its field
+  const fieldDiameter = () => FIELD_FILL * Math.min(viewer.canvas.clientWidth, viewer.canvas.clientHeight);  // screen px
+  const micronsPerScreenPxAtOneX = () => eyepiece.field ? eyepiece.fieldNumber * 1000 / fieldDiameter() : screenMmPerPx() * 1000 / eyepiece.power;
+  const zoomScale = magnification => magnification * slide.mpp / micronsPerScreenPxAtOneX();  // screen px per slide px
   for (const button of part("zoom").children) {
     button.addEventListener("click", () => {
       if (!slide?.mpp) return;
@@ -1279,6 +1358,38 @@ function createPane(index) {
     part("capture-size").classList.toggle("warn", downsample > 1);
   }
 
+  // the microscope field: the slide outside a centred circle dimmed
+  function drawField(dpr, width, height) {
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const shade = new Path2D();
+    shade.rect(0, 0, width, height);
+    shade.arc(width / 2, height / 2, fieldDiameter() / 2, 0, 2 * Math.PI);
+    ctx.fillStyle = "rgba(0, 0, 0, 0.4)";
+    ctx.fill(shade, "evenodd");
+    ctx.beginPath();
+    ctx.arc(width / 2, height / 2, fieldDiameter() / 2, 0, 2 * Math.PI);
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.3)";
+    ctx.stroke();
+  }
+  const showEyepiece = () => {
+    part("field").classList.toggle("active", eyepiece.field);
+    part("field-settings").hidden = !eyepiece.field;
+    for (const button of part("eyepiece-power").children) button.classList.toggle("active", Number(button.dataset.value) === eyepiece.power);
+    for (const button of part("field-number").children) button.classList.toggle("active", Number(button.dataset.value) === eyepiece.fieldNumber);
+  };
+  const changeEyepiece = change => {
+    Object.assign(eyepiece, change);
+    try { localStorage.setItem("eyepiece", JSON.stringify(eyepiece)); } catch {}
+    panes.forEach(other => other.showEyepiece());
+  };
+  part("field").addEventListener("click", () => changeEyepiece({field: !eyepiece.field}));
+  for (const button of part("eyepiece-power").children) button.addEventListener("click", () => changeEyepiece({power: Number(button.dataset.value)}));
+  for (const button of part("field-number").children) button.addEventListener("click", () => changeEyepiece({fieldNumber: Number(button.dataset.value)}));
+  part("calibrate").addEventListener("click", calibrateScreen);
+  showEyepiece();
+  pane.showEyepiece = () => { showEyepiece(); draw(); };
+
   let cursorText = "";
   let zoomText = "";
   const showStatus = () => { part("status").textContent = [cursorText, zoomText].filter(Boolean).join("  ·  "); };
@@ -1312,8 +1423,10 @@ function createPane(index) {
       ctx.fill();
       ctx.stroke();
     }
+    if (eyepiece.field && !capturing) drawField(dpr, width, height);
     if (capturing && frame) drawFrame(dpr, width, height);
-    zoomText = slide.mpp ? `${(scale * 10 / slide.mpp).toFixed(1)}×` : `${scale.toFixed(2)} screen px/px`;
+    zoomText = slide.mpp ? `${(scale * micronsPerScreenPxAtOneX() / slide.mpp).toFixed(1)}×` : `${scale.toFixed(2)} screen px/px`;
+    if (slide.mpp && eyepiece.field) zoomText += `, field ⌀ ${micronsText(+(fieldDiameter() * slide.mpp / scale).toPrecision(2))}`;
     showZoom(scale);
     showStatus();
     renderInfo(scale);
