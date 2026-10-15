@@ -1,11 +1,12 @@
-"""Annotator: nuclei layers are counted, inside the ROIs once some are shown, ROIs save as loaded, and overlays turn with the view."""
+"""Annotator: nuclei layers are counted, inside the ROIs once some are shown, ROIs save as loaded, overlays turn with the view, and captures show them."""
 import json
 
 import numpy as np
 import pytest
+from PIL import Image
 from playwright.sync_api import Page
 
-from conftest import open_files, pointer_at, set_view, wait_for
+from conftest import drag, open_files, pointer_at, set_view, wait_for
 from test_slides import screenshot
 
 # ROIs in slide px: a square with a hole, and a second square; edges on multiples of 100
@@ -124,3 +125,43 @@ def test_calibration_sets_magnification(annotator: Page, tiffs):
     wait_for(annotator, "$('status').textContent.includes('100.0×')")
     assert annotator.evaluate("localStorage.getItem('screen-mm-per-device-px')") == "0.25"
     assert json.loads(annotator.evaluate("localStorage.getItem('eyepiece')"))["power"] == 10
+
+
+@pytest.mark.parametrize("rotation, flip", [(0, False), (90, False), (-30, False), (0, True), (135, True)])
+def test_capture_saves_what_is_on_screen(annotator: Page, tiffs, nuclei, tmp_path, rotation, flip):
+    """At 1 screen px per slide px, a capture is the frame's rectangle on screen up to resampling, the ROI and the nuclei inside it included."""
+    open_files(annotator, tiffs["ome_zlib"][0])
+    annotator.evaluate("viewer.viewport.zoomTo(viewer.viewport.imageToViewportZoom(1), null, true)")
+    set_view(annotator, rotation, flip)
+    (left, top), (right, bottom) = (400, 150), (880, 560)
+    # an ROI about the middle of the captured rectangle, so it stays inside it however the view is turned
+    x, y = annotator.evaluate(f"(() => {{ const point = toImage(viewer, new OpenSeadragon.Point({(left + right) / 2}, {(top + bottom) / 2})); return [Math.round(point.x), Math.round(point.y)]; }})()")
+    path = tmp_path / "roi.geojson"
+    path.write_text(feature_collection([{"type": "Feature", "geometry": {"type": "Polygon", "coordinates": [ring(x - 140, y - 140, x + 140, y + 140)]}, "properties": {}}]))
+    annotator.set_input_files("#roi-file", str(path))
+    annotator.set_input_files("#files", nuclei[0])
+    wait_for(annotator, "$('layers').querySelectorAll('label').length >= 3")
+    annotator.evaluate("new Promise(requestAnimationFrame)")
+    want = screenshot(annotator, view_only=True)[top:bottom, left:right]
+
+    annotator.click("#capture")
+    drag(annotator, (200, 160), (left, top))
+    drag(annotator, (800, 640), (right, bottom))
+    with annotator.expect_download() as download:
+        annotator.click("#capture-save")
+    got = np.asarray(Image.open(download.value.path()).convert("RGB")).astype(int)
+    assert abs(got.shape[0] - want.shape[0]) <= 1 and abs(got.shape[1] - want.shape[1]) <= 1, got.shape
+    above_ruler = slice(0, want.shape[0] - 60), slice(0, min(got.shape[1], want.shape[1]))
+    assert np.median(np.abs(got[above_ruler] - want[above_ruler])) <= 3
+    assert (np.abs(got - [0, 255, 255]).max(-1) <= 10).sum() > 300  # the ROI's 3 px outline
+    assert (got[-15:-12, 13:58] < 40).all()  # the black ruler, 12 px in from the bottom left
+
+    # the nuclei show, but only inside the ROI: hiding them changes the capture there and nowhere else
+    annotator.evaluate("for (const label of $('layers').querySelectorAll('label')) if (label.textContent.match(/Lymphocyte|Tumor/)) label.firstChild.click()")
+    with annotator.expect_download() as download:
+        annotator.click("#capture-save")
+    without = np.asarray(Image.open(download.value.path()).convert("RGB")).astype(int)
+    ys, xs = np.nonzero(np.abs(got - without).max(-1) > 30)
+    assert len(xs) > 100
+    centre = (got.shape[1] / 2, got.shape[0] / 2)
+    assert np.hypot(xs - centre[0], ys - centre[1]).max() < 140 * 2 ** 0.5 + 3

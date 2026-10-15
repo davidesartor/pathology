@@ -79,6 +79,14 @@ def pointer_at(page: Page, x: int, y: int) -> tuple[int, int]:
     return slide_x, slide_y
 
 
+def drag(page: Page, start: tuple[float, float], end: tuple[float, float]):
+    """Press at start, move to end in steps, release."""
+    page.mouse.move(*start)
+    page.mouse.down()
+    page.mouse.move(*end, steps=10)
+    page.mouse.up()
+
+
 def set_view(page: Page, rotation: float, flip: bool):
     """Turn and mirror the view with the page's own controls."""
     page.locator("#rotation").fill(str(rotation))
