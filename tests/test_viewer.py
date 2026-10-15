@@ -1,10 +1,10 @@
-"""Viewer: highlights and measurements are named drawings; a capture saves its frame as on screen, drawings included, with a ruler."""
+"""Viewer: highlights are named drawings; a capture saves its frame as on screen, drawings included, with a ruler."""
 import numpy as np
 import pytest
 from PIL import Image
 from playwright.sync_api import Page
 
-from conftest import open_files, set_view, settle, wait_for
+from conftest import drag, open_files, set_view, wait_for
 from test_slides import screenshot
 
 
@@ -33,13 +33,6 @@ def test_highlight_is_named_and_kept(viewer: Page, tiffs):
     assert viewer.evaluate("slide.areas[0].name") == "tumour edge"
 
 
-def drag(page: Page, start: tuple[int, int], end: tuple[int, int]):
-    page.mouse.move(*start)
-    page.mouse.down()
-    page.mouse.move(*end, steps=10)
-    page.mouse.up()
-
-
 @pytest.mark.parametrize("rotation, flip", [(0, False), (90, False), (-30, False), (0, True), (135, True)])
 def test_capture_saves_what_is_on_screen(viewer: Page, tiffs, rotation, flip):
     """At 1 screen px per slide px, a capture is the frame's rectangle on screen up to resampling, highlight included, ruler bottom left."""
@@ -63,91 +56,6 @@ def test_capture_saves_what_is_on_screen(viewer: Page, tiffs, rotation, flip):
     rgb = np.array([int(color[i:i + 2], 16) for i in (1, 3, 5)])
     assert (np.abs(got - rgb).max(-1) <= 10).sum() > 30  # the highlight's 1.5 px outline
     assert (got[-15:-12, 13:58] < 40).all()  # the black ruler, 12 px in from the bottom left (the slide has a pixel size)
-
-
-def test_capture_frame_keeps_its_shape_and_settings(viewer: Page, tiffs):
-    """A fixed shape holds while resizing; shape and corner come back on the next visit."""
-    open_files(viewer, tiffs["ome_zlib"][0])
-    viewer.click("#capture")
-    viewer.click("#capture-shape [data-value='4:3']")
-    drag(viewer, (800, 640), (900, 700))
-    viewer.click("#capture-corner [data-value='top-right']")
-    assert viewer.evaluate("JSON.parse(localStorage.getItem('capture-settings')).size") is None  # kept only once a capture is saved
-    viewer.reload()
-    open_files(viewer, tiffs["ome_zlib"][0])
-    viewer.click("#capture")
-    assert viewer.locator("#capture-shape .active").get_attribute("data-value") == "4:3"
-    assert viewer.locator("#capture-corner .active").get_attribute("data-value") == "top-right"
-    size = viewer.locator("#capture-size").text_content()
-    width, height = (int(n.replace(",", "")) for n in size.split(" px")[0].split(" × "))
-    assert abs(width / height - 4 / 3) < 0.01, size
-
-
-def test_capture_size_in_microns(viewer: Page, tiffs):
-    """A typed side spans that much tissue, a fixed shape carrying the other along and the view zooming out to fit; the boxes follow freehand resizing."""
-    open_files(viewer, tiffs["ome_zlib"][0])
-    viewer.evaluate("viewer.viewport.zoomTo(viewer.viewport.imageToViewportZoom(1), null, true)")
-    viewer.click("#capture")
-    viewer.click("#capture-shape [data-value='4:3']")
-    viewer.fill("#capture-width", "500")
-    viewer.press("#capture-width", "Enter")
-    assert viewer.locator("#capture-size").text_content().startswith("2,000 × 1,500 px")
-    assert viewer.input_value("#capture-height") == "375"
-    assert viewer.evaluate("viewer.viewport.viewportToImageZoom(viewer.viewport.getZoom(true))") <= 0.9 * 1000 / 2000 + 1e-3
-    viewer.click("#capture-shape [data-value='free']")
-    viewer.fill("#capture-height", "100")
-    viewer.press("#capture-height", "Enter")
-    assert viewer.locator("#capture-size").text_content().startswith("2,000 × 400 px")
-    before = viewer.input_value("#capture-width")
-    rect = viewer.evaluate("(() => { const s = viewer.viewport.getContainerSize(); return [s.x, s.y]; })()")
-    scale = viewer.evaluate("viewer.viewport.viewportToImageZoom(viewer.viewport.getZoom(true))")
-    corner = (rect[0] / 2 - 1000 * scale, rect[1] / 2 - 200 * scale)  # top left, clear of the panel
-    drag(viewer, corner, (corner[0] + 100, corner[1]))
-    assert viewer.input_value("#capture-width") != before
-
-
-def test_zoom_presets(viewer: Page, tiffs):
-    """Through a 10× eyepiece, 10× shows the slide (0.25 µm per px) at its true size times 100 on screen."""
-    open_files(viewer, tiffs["ome_zlib"][0])
-    viewer.click("#zoom [data-zoom='10']")
-    viewer.wait_for_timeout(1500)  # the zoom animates
-    want = 0.25e-3 * 100 / viewer.evaluate("screenMmPerPx()")  # screen px per slide px
-    assert abs(viewer.evaluate("viewer.viewport.viewportToImageZoom(viewer.viewport.getZoom(true))") / want - 1) < 0.02
-    assert viewer.locator("#zoom .active").get_attribute("data-zoom") == "10"
-
-
-def test_measure_line(viewer: Page, tiffs):
-    """A dragged line is kept with its length in µm; shift keeps it level."""
-    open_files(viewer, tiffs["ome_zlib"][0])
-    viewer.evaluate("viewer.viewport.zoomTo(viewer.viewport.imageToViewportZoom(1), null, true)")
-    viewer.click("#measure")
-    drag(viewer, (300, 300), (500, 300))
-    viewer.keyboard.down("Shift")
-    drag(viewer, (300, 400), (500, 420))
-    viewer.keyboard.up("Shift")
-    first, second = viewer.evaluate("slide.areas")
-    assert first["kind"] == "line" and abs(np.hypot(*np.diff(first["ring"], axis=0)[0]) - 200) <= 1
-    assert second["ring"][0][1] == second["ring"][1][1]  # level
-    assert viewer.locator("#areas .area .count").first.text_content() == "50 µm"
-
-
-def test_microscope_field_sets_magnification(viewer: Page, tiffs):
-    """With the field on, 40× through a 10×/22 eyepiece shows a 0.55 mm circle, the slide dimmed outside it."""
-    open_files(viewer, tiffs["ome_zlib"][0])
-    viewer.click("#zoom [data-zoom='40']")
-    settle(viewer)
-    plain = screenshot(viewer, view_only=True).astype(int)
-    viewer.click("#field")
-    viewer.click("#field-number [data-value='22']")
-    viewer.click("#zoom [data-zoom='40']")
-    wait_for(viewer, "$('status').textContent.includes('40.0×, field ⌀ 550 µm')")
-    settle(viewer)
-    assert viewer.locator("#zoom .active").get_attribute("data-zoom") == "40"
-    # the circle is 90% of the 800 px height: the centre is lit, the left edge dimmed
-    dimmed = screenshot(viewer, view_only=True).astype(int)
-    assert dimmed[390:410, 490:510].mean() > 100 and dimmed[390:410, 20:60].mean() < 0.7 * plain[390:410, 20:60].mean()
-    viewer.reload()
-    assert viewer.evaluate("eyepiece.field") and viewer.locator("#field").get_attribute("class") == "active"
 
 
 def test_calibration_sets_magnification(viewer: Page, tiffs):

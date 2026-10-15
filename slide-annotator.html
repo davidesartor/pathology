@@ -58,12 +58,27 @@
   .disclaimer form { margin: 0; text-align: right; }
   .disclaimer button { font: inherit; color: inherit; background: #066; border: 1px solid #0ff; border-radius: 4px; padding: 4px 14px; cursor: pointer; }
   #panel .row { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
-  #panel .row > span { color: #aaa; }
+  #panel .row > span { width: 58px; color: #aaa; }
   #panel .seg { flex: 1; display: flex; }
+  #panel #zoom { margin-top: 6px; }
   #panel .seg button { flex: 1; min-width: 0; padding: 3px 2px; border-radius: 0; margin-left: -1px; }
   #panel .seg button:first-child { border-radius: 4px 0 0 4px; margin-left: 0; }
   #panel .seg button:last-child { border-radius: 0 4px 4px 0; }
-  #panel .seg button.active { position: relative; z-index: 1; }
+  #panel .seg button.active { position: relative; z-index: 1; }  /* its outline sits over the neighbours it overlaps */
+  #panel .area { display: flex; align-items: center; gap: 2px; padding: 1px 0; font-variant-numeric: tabular-nums; }
+  #panel .area input[type=text] { flex: 1; min-width: 0; font: inherit; color: inherit; background: none; border: 1px solid transparent; border-radius: 4px; padding: 1px 4px; }
+  #panel .area input[type=text]:hover, #panel .area input[type=text]:focus { border-color: #555; outline: none; }
+  #panel .area input[type=color] { width: 20px; height: 20px; padding: 0; border: none; background: none; cursor: pointer; }
+  #panel .area button { padding: 0 5px; background: none; border: none; color: #999; }
+  #panel .area button:hover { color: #fff; }
+  #panel .dims { display: flex; align-items: center; gap: 6px; margin-top: 3px; }
+  #panel .dims input { flex: 1; min-width: 0; font: inherit; color: inherit; text-align: center; font-variant-numeric: tabular-nums; background: #333; border: 1px solid #555; border-radius: 4px; padding: 3px 2px; }
+  #panel .dims input:focus { outline: none; border-color: #0ff; }
+  #panel .dims input:disabled { opacity: 0.5; }
+  #panel .option { margin-top: 8px; color: #aaa; }
+  #panel .option + .seg { margin-top: 3px; }
+  #panel .capture-size { margin: 8px 0 0; color: #ccc; font-variant-numeric: tabular-nums; }
+  #panel .capture-size.warn { color: #fc6; }
   .calibration form { display: flex; gap: 6px; justify-content: flex-end; }
   .calibration form button:not([value=save]), .calibration .seg button { background: #333; border-color: #555; }
   .calibration .seg { display: flex; }
@@ -110,15 +125,38 @@
     <label title="turns the view about its centre; slide px, ROIs and nuclei are unchanged. Double-click to straighten">rotate <input id="rotation" type="range" min="-180" max="180" step="1" value="0"><span id="rotation-value" class="count">0°</span></label>
     <button id="flip" title="mirrors the view left to right">Flip</button>
   </div>
-  <div class="row" title="the magnification counts as through a microscope objective: the slide on screen, seen from 25 cm, looks as big as through this eyepiece">
-    <span>Eyepiece</span><div class="seg" id="eyepiece-power"><button data-value="10">10×</button><button data-value="12.5">12.5×</button><button data-value="15">15×</button><button data-value="20">20×</button></div>
+  <div class="seg" id="zoom" title="zoom as through a microscope objective of this power: the slide on screen, seen from 25 cm, looks as big as through the eyepiece. With the microscope field on, the circle shows that objective's field">
+    <button data-zoom="2.5">2.5×</button><button data-zoom="5">5×</button><button data-zoom="10">10×</button><button data-zoom="20">20×</button><button data-zoom="40">40×</button>
   </div>
-  <div class="buttons"><button id="calibrate" title="match a ruler or a plug held against the screen, so the magnification knows the screen's pixel size">Calibrate screen</button></div>
+  <div class="row"><span title="the number before the slash on the eyepiece, e.g. 10 for 10×/22">Eyepiece</span><div class="seg" id="eyepiece-power"><button data-value="10">10×</button><button data-value="12.5">12.5×</button><button data-value="15">15×</button><button data-value="20">20×</button></div></div>
+  <div class="buttons">
+    <button id="field" title="dims the view outside a circle, as seen through the eyepiece; the magnifications then count how much of the slide the circle shows">Microscope field</button>
+    <button id="calibrate" title="match a ruler or a plug held against the screen, so the magnifications know the screen's pixel size">Calibrate screen</button>
+  </div>
+  <div class="row" id="field-settings" hidden><span title="the number after the slash on the eyepiece, e.g. 22 for 10×/22">Field no.</span><div class="seg" id="field-number"><button data-value="18">18</button><button data-value="20">20</button><button data-value="22">22</button><button data-value="25">25</button><button data-value="26.5">26.5</button></div></div>
   <div class="buttons" id="roi-buttons">
     <button id="draw-roi" title="draw regions on this slide">Draw ROI</button>
     <button id="load-roi" title="add the regions in a GeoJSON file (e.g. saved ROIs or QuPath annotations) to this slide's ROIs">Load ROI</button>
     <button id="save-roi" title="save the regions drawn on this slide as a GeoJSON file (QuPath annotations)" disabled>Save ROIs</button>
   </div>
+  <div class="buttons" id="tool-buttons">
+    <button id="measure" title="draw straight lines labelled with their length; captures show them">Measure</button>
+    <button id="capture" title="frame part of the slide and save it as a full-resolution PNG, turned and mirrored as on screen, with the layers shown">Capture</button>
+  </div>
+  <p id="draw-help" class="note" hidden>Click to place corners, or hold and drag to trace. Close with Enter, a double-click or a click on the first corner. A shape drawn inside another is an exclusion zone. Backspace undoes, Esc cancels. Two fingers pan, pinch zooms.</p>
+  <p id="measure-help" class="note" hidden>Drag a line, or click its two ends. Shift keeps it level or upright. Backspace undoes, Esc stops. Two fingers pan, pinch zooms.</p>
+  <div id="capture-settings" hidden>
+    <p class="note">Drag the frame to move it and its corners to resize it, or type its size; drag outside it to pan. Enter saves, Esc closes.</p>
+    <div class="option">Shape</div>
+    <div class="seg" id="capture-shape"><button data-value="free">Free</button><button data-value="1:1">1:1</button><button data-value="4:3">4:3</button><button data-value="3:2">3:2</button><button data-value="16:9">16:9</button><button id="capture-turn" title="swap width and height">⤾</button></div>
+    <div class="option">Size (µm)</div>
+    <div class="dims"><input type="text" inputmode="decimal" id="capture-width" title="width in µm; Enter sets it">×<input type="text" inputmode="decimal" id="capture-height" title="height in µm; Enter sets it"></div>
+    <div class="option">Scale bar</div>
+    <div class="seg" id="capture-corner"><button data-value="top-left" title="top left">↖</button><button data-value="top-right" title="top right">↗</button><button data-value="bottom-left" title="bottom left">↙</button><button data-value="bottom-right" title="bottom right">↘</button><button data-value="none">None</button></div>
+    <p class="capture-size" id="capture-size"></p>
+    <div class="buttons"><button id="capture-save">Save PNG</button></div>
+  </div>
+  <div id="areas"></div>
   <div id="detect" hidden>
     <h4><span>Detect nuclei</span></h4>
     <select id="model" aria-label="model" title="the published nuclei model to run (HoVer-NeXt or CellViT++); it is downloaded once and kept in the browser"></select>
@@ -133,7 +171,6 @@
     </div>
     <p id="model-status" class="note" hidden></p>
   </div>
-  <p id="draw-help" class="note" hidden>Click to place corners, or hold and drag to trace. Close with Enter, a double-click or a click on the first corner. A shape drawn inside another is an exclusion zone. Backspace undoes, Esc cancels. Two fingers pan, pinch zooms.</p>
   <input id="slide-file" type="file" accept=".tif,.tiff,.btf,.tf8,.svs,.mrxs" multiple hidden>
   <input id="slide-folder" type="file" webkitdirectory hidden>
   <input id="files" type="file" accept=".geojson,.json" multiple hidden>
@@ -894,6 +931,7 @@ $("flip").addEventListener("click", () => setView(viewer.viewport.getRotation(),
 viewer.addHandler("open", () => {
   if (slide?.bounds) viewer.viewport.fitBounds(slide.bounds, true);
   if (compareSlide) follow(viewer, viewer2);
+  if (capturing) placeFrame();
 });
 
 // one tab per slide opened so far, each a workspace keeping its layers, ROIs and view; the slides are kept in the URL hash as "slide" or "slide|compared"
@@ -909,7 +947,7 @@ function listSlides() {
   renderTabs();
   $("compare").replaceChildren(new Option("side by side with…", ""), ...slides.map(({name}) => new Option(name, name)));
   $("compare").value = compareSlide?.name ?? "";
-  $("tabs").hidden = $("compare").hidden = $("layer-buttons").hidden = $("view").hidden = $("roi-buttons").hidden = !slides.length;
+  $("tabs").hidden = $("compare").hidden = $("layer-buttons").hidden = $("view").hidden = $("zoom").hidden = $("roi-buttons").hidden = $("tool-buttons").hidden = !slides.length;
   $("detect").hidden = !slides.length || !$("model").options.length;
   $("no-slides").hidden = slides.length > 0;
 }
@@ -948,6 +986,7 @@ function closeSlide(entry) {
   slides.splice(index, 1);
   if (compareSlide === entry) compareSlide = null;
   if (slide === entry) {
+    if (!slides.length) setTool(null);
     slide = null;
     $("info").hidden = true;
     layers = [];
@@ -1111,6 +1150,19 @@ async function openTIFF(file) {
     }
   };
 
+  // level-0 region [x0, x1) x [y0, y1) drawn into a context of the given size from the finest stored level no finer than needed
+  async function drawRegion(context, x0, y0, x1, y1, outWidth, outHeight) {
+    const scale = (x1 - x0) / outWidth;
+    const {image, downsample: stored} = levels.findLast(({downsample: stored}) => stored <= scale * 1.01) ?? levels[0];
+    const [left, top] = [Math.floor(x0 / stored), Math.floor(y0 / stored)];
+    const right = Math.max(left + 1, Math.min(image.getWidth(), Math.ceil(x1 / stored)));
+    const bottom = Math.max(top + 1, Math.min(image.getHeight(), Math.ceil(y1 / stored)));
+    const rgb = await image.readRasters({window: [left, top, right, bottom], samples: [0, 1, 2], interleave: true});
+    const bitmap = await createImageBitmap(tileRGBA(rgb, right - left, bottom - top));
+    context.drawImage(bitmap, (left * stored - x0) / scale, (top * stored - y0) / scale, (right - left) * stored / scale, (bottom - top) * stored / scale);
+    bitmap.close();
+  }
+
   // microns per px from the TIFF resolution tags (unit 2 = inch, 3 = cm), for the magnification readout,
   // and as OpenSlide reads it (a float32 resolution) for nucleus detection, so blocks are resampled as predict_roi.py does
   const directory = full.fileDirectory;
@@ -1137,7 +1189,7 @@ async function openTIFF(file) {
     original: aperio?.Filename ?? omeValue("UUID", "FileName"),
     software: tag("Software") ?? (aperio && description.split(/\r?\n/)[0].trim()),
   });
-  return {width, height, mpp: aperioMpp ?? mpp, metadata, inferenceMpp: aperioMpp ?? inferenceMpp, image: full, source};
+  return {width, height, mpp: aperioMpp ?? mpp, metadata, inferenceMpp: aperioMpp ?? inferenceMpp, image: full, drawRegion, source};
 }
 
 // a MIRAX (3DHistech .mrxs) slide is a folder: Slidedat.ini, Index.dat and Data*.dat files holding one JPEG, PNG or BMP per camera image
@@ -1340,7 +1392,7 @@ async function openMRXS(folder) {
     scanned: general.SLIDE_CREATIONDATETIME,
     original: general.SLIDE_NAME,
   });
-  return {width, height, mpp, metadata, inferenceMpp: mpp, image, source};
+  return {width, height, mpp, metadata, inferenceMpp: mpp, image, drawRegion, background, source};
 }
 
 // slides are listed at once, and each is read when first shown
@@ -1436,11 +1488,13 @@ async function openSlide() {
   if (slide) Object.assign(slide, {bounds: viewer.viewport.getBounds(), rotation: viewer.viewport.getRotation(), flip: viewer.viewport.getFlip()});
   slide = nextSlide;
   selected = null;
-  [draft, draftStrokes] = [[], []];
+  [draft, draftStrokes, measureStart] = [[], [], null];
   document.title = slide.name;
   renderTabs();
   layers = layersBySlide[slide.name] ??= [];
+  slide.areas ??= [];
   renderLayers();
+  renderAreas();
   setView(slide.rotation ?? 0, slide.flip ?? false);
   viewer.open(slide.source);
 }
@@ -1684,10 +1738,10 @@ async function watchFolderHandle(folder) {
 }
 
 // the ROIs and annotations shown on this slide: nuclei outside them are left out of the counts and hidden
-const shownRings = () => layers.flatMap(layer => [...layer.classes.values()]).filter(cls => !cls.detection && cls.visible).flatMap(cls => cls.rings);
+const shownRings = (from = layers) => from.flatMap(layer => [...layer.classes.values()]).filter(cls => !cls.detection && cls.visible).flatMap(cls => cls.rings);
 let regionCache = {rings: [], depths: []};
-function shownRegions() {
-  const rings = shownRings();
+function shownRegions(from = layers) {
+  const rings = shownRings(from);
   if (rings.length !== regionCache.rings.length || rings.some((ring, i) => ring !== regionCache.rings[i])) regionCache = {rings, depths: regionDepths(rings)};
   return regionCache;
 }
@@ -2043,16 +2097,29 @@ function undo() {
   rebuildDrawn(layer);
 }
 
-function setDrawing(on) {
-  if (!on && draft.length) finishDraft();
-  drawing = on;
-  viewer.gestureSettingsMouse.dragToPan = viewer.gestureSettingsMouse.clickToZoom = !on;
-  viewer.canvas.style.cursor = on ? "crosshair" : "";
-  $("draw-roi").textContent = on ? "Done drawing" : "Draw ROI";
-  $("draw-roi").classList.toggle("active", on);
-  $("draw-help").hidden = !on;
+// one tool at a time on the main pane: drawing ROIs, measuring or capturing
+let measuring = false;
+let capturing = false;
+function setTool(tool) {
+  if (drawing && tool !== "roi" && draft.length) finishDraft();
+  [drawing, measuring, capturing] = ["roi", "measure", "capture"].map(name => name === tool);
+  measureStart = null;
+  for (const settings of [viewer.gestureSettingsMouse, viewer.gestureSettingsTouch, viewer.gestureSettingsPen]) settings.dragToPan = settings.clickToZoom = !(drawing || measuring);
+  viewer.canvas.style.cursor = drawing || measuring ? "crosshair" : "";
+  $("draw-roi").textContent = drawing ? "Done drawing" : "Draw ROI";
+  $("measure").textContent = measuring ? "Done" : "Measure";
+  $("capture").textContent = capturing ? "Done" : "Capture";
+  for (const [id, on] of [["draw-roi", drawing], ["measure", measuring], ["capture", capturing]]) $(id).classList.toggle("active", on);
+  $("draw-help").hidden = !drawing;
+  $("measure-help").hidden = !measuring;
+  $("capture-settings").hidden = !capturing;
+  viewer.navigator.element.parentElement.style.display = capturing ? "none" : "inline-block";  // it would cover the frame's corner
+  if (capturing) placeFrame();
+  draw();
 }
-$("draw-roi").addEventListener("click", () => setDrawing(!drawing));
+$("draw-roi").addEventListener("click", () => setTool(drawing ? null : "roi"));
+$("measure").addEventListener("click", () => setTool(measuring ? null : "measure"));
+$("capture").addEventListener("click", () => setTool(capturing ? null : "capture"));
 
 viewer.addHandler("canvas-press", event => { if (drawing) pressed = {position: event.position, dragged: false}; });
 viewer.addHandler("canvas-drag", event => {
@@ -2082,14 +2149,14 @@ viewer.addHandler("canvas-double-click", () => { if (drawing) finishDraft(); });
 
 // a click on a nucleus selects it for labelling, instead of zooming (OSD has already undone the mirroring of a click)
 viewer.addHandler("canvas-click", event => {
-  if (drawing || !event.quick || !MANUAL_REVIEW) return;
+  if (drawing || measuring || capturing || !event.quick || !MANUAL_REVIEW) return;
   const point = viewer.viewport.viewerElementToImageCoordinates(event.position), hit = nucleusAt(point.x, point.y);
   if (!hit && !selected) return;
   event.preventDefaultAction = true;
   hit ? select(hit.layer, hit.i) : select(null);
 });
 window.addEventListener("keydown", event => {
-  if (drawing || !selected || event.metaKey || event.ctrlKey || event.altKey || ["INPUT", "SELECT", "TEXTAREA"].includes(event.target.tagName)) return;
+  if (drawing || measuring || capturing || !selected || event.metaKey || event.ctrlKey || event.altKey || ["INPUT", "SELECT", "TEXTAREA"].includes(event.target.tagName)) return;
   const names = selected.layer.nuclei.names, digit = Number(event.key);
   if (event.key === "0") labelNucleus(NOT_NUCLEUS);
   else if (Number.isInteger(digit) && digit >= 1 && digit <= names.length) labelNucleus(names[digit - 1]);
@@ -2100,24 +2167,31 @@ window.addEventListener("keydown", event => {
   event.stopPropagation();
 }, true);
 
+// the tools' keys; typing in a name or a capture size is left alone
+const isUndo = event => event.key === "Backspace" || event.key === "Delete" || (event.key === "z" && (event.metaKey || event.ctrlKey));
 window.addEventListener("keydown", event => {
-  if (!drawing) return;
-  if (event.key === "Enter") finishDraft();
-  else if (event.key === "Escape") draft.length ? ([draft, draftStrokes] = [[], []], draw()) : setDrawing(false);
-  else if (event.key === "Backspace" || event.key === "Delete" || (event.key === "z" && (event.metaKey || event.ctrlKey))) undo();
+  if (event.target.matches?.("input[type=text]")) return;
+  if (capturing && event.key === "Escape") setTool(null);
+  else if (capturing && event.key === "Enter") saveFrame();
+  else if (measuring && event.key === "Escape") measureStart ? (measureStart = null, draw()) : setTool(null);
+  else if (measuring && isUndo(event)) measureStart ? (measureStart = null, draw()) : undoLine();
+  else if (!drawing) return;
+  else if (event.key === "Enter") finishDraft();
+  else if (event.key === "Escape") draft.length ? ([draft, draftStrokes] = [[], []], draw()) : setTool(null);
+  else if (isUndo(event)) undo();
   else return;
   event.preventDefault();
   event.stopPropagation();
 }, true);
 
-// while drawing, a trackpad works as in map apps, since dragging draws: two fingers pan and a pinch zooms
+// while drawing or measuring, a trackpad works as in map apps, since dragging draws: two fingers pan and a pinch zooms
 // (Chrome sends a pinch as ctrl+wheel, Safari as gesture events)
 const pointerPoint = event => {
   const rect = viewer.container.getBoundingClientRect();
   return viewer.viewport.pointFromPixel(unmirrored(viewer, new OpenSeadragon.Point(event.clientX - rect.left, event.clientY - rect.top)));
 };
 viewer.container.addEventListener("wheel", event => {
-  if (!drawing) return;
+  if (!drawing && !measuring) return;
   event.preventDefault();
   event.stopPropagation();
   const unit = event.deltaMode === 1 ? 16 : 1;  // lines or px
@@ -2126,14 +2200,235 @@ viewer.container.addEventListener("wheel", event => {
   viewer.viewport.applyConstraints();
 }, {capture: true, passive: false});
 let gestureScale = 1;
-viewer.container.addEventListener("gesturestart", event => { if (drawing) { event.preventDefault(); gestureScale = 1; } });
+viewer.container.addEventListener("gesturestart", event => { if (drawing || measuring) { event.preventDefault(); gestureScale = 1; } });
 viewer.container.addEventListener("gesturechange", event => {
-  if (!drawing) return;
+  if (!drawing && !measuring) return;
   event.preventDefault();
   viewer.viewport.zoomBy(event.scale / gestureScale, pointerPoint(event), true);
   viewer.viewport.applyConstraints();
   gestureScale = event.scale;
 });
+
+// measuring: a drag, or two clicks, draws a line kept with the slide (as the viewer's areas, lines only here); shift snaps it level or upright on screen
+const LINE_COLOR = "#ffdc00";
+let measureStart = null;  // slide px of the line's first end, while it is drawn
+const measureEnd = (position, shift) => {
+  if (!shift) return slidePoint(position);
+  const start = toScreen(viewer, ...measureStart);
+  const level = Math.abs(position.x - start.x) >= Math.abs(position.y - start.y);
+  return slidePoint(new OpenSeadragon.Point(level ? position.x : start.x, level ? start.y : position.y));
+};
+function finishLine(end) {
+  const start = measureStart;
+  measureStart = null;
+  if (screenDistance(start, end) >= 4) {
+    const number = (slide.areas.at(-1)?.number ?? 0) + 1;
+    slide.areas.push({number, kind: "line", name: "", color: LINE_COLOR, ring: [start, end].map(([x, y]) => [Math.round(x), Math.round(y)])});
+    renderAreas();
+  }
+  draw();
+}
+function undoLine() {
+  if (!slide?.areas.length) return;
+  slide.areas.pop();
+  renderAreas();
+  draw();
+}
+viewer.addHandler("canvas-press", event => {
+  if (!measuring) return;
+  pressed = {position: event.position, dragged: false};
+  measureStart ??= slidePoint(event.position);
+});
+viewer.addHandler("canvas-drag", event => {
+  if (!measuring || !pressed) return;
+  if (event.position.distanceTo(pressed.position) >= TRACE_STEP) pressed.dragged = true;
+  pointer = measureEnd(event.position, event.originalEvent?.shiftKey);
+  draw();
+});
+viewer.addHandler("canvas-release", event => {
+  if (!measuring || !pressed) return;
+  const {dragged, position} = pressed;
+  pressed = null;
+  // a click that only placed the first end waits for the second
+  if (dragged || screenDistance(measureStart, slidePoint(position)) >= CLOSE_DISTANCE || event.position.distanceTo(position) >= TRACE_STEP) finishLine(measureEnd(event.position, event.originalEvent?.shiftKey));
+});
+
+// fit the line on screen, as the view is turned
+function goToArea(area) {
+  const box = turnedBox(area.ring, viewTurn(viewer));
+  const {x: width, y: height} = viewer.viewport.getContainerSize();
+  const scale = 0.85 * Math.min(width / Math.max(box.width, 1), height / Math.max(box.height, 1));  // screen px per slide px
+  const xs = area.ring.map(([x]) => x), ys = area.ring.map(([, y]) => y);
+  const centre = viewer.viewport.imageToViewportCoordinates((Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...ys) + Math.max(...ys)) / 2);
+  viewer.viewport.zoomTo(viewer.viewport.imageToViewportZoom(scale));
+  viewer.viewport.panTo(centre);
+}
+function renderAreas() {
+  $("areas").replaceChildren(...(slide?.areas ?? []).map(area => {
+    const row = document.createElement("div");
+    row.className = "area";
+    row.innerHTML = `<input type="color" title="colour of this measurement"><input type="text" title="name of this measurement, shown by it" spellcheck="false" placeholder="Measure"><span class="count"></span><button title="show this measurement">◎</button><button title="remove this measurement">×</button>`;
+    const [color, name, length, showButton, remove] = row.children;
+    [color.value, name.value, length.textContent] = [area.color, area.name, lineLength(slide, area.ring)];
+    color.addEventListener("input", () => { area.color = color.value; draw(); });
+    name.addEventListener("input", () => { area.name = name.value; draw(); });
+    name.addEventListener("keydown", event => { if (event.key === "Enter" || event.key === "Escape") name.blur(); });
+    showButton.addEventListener("click", () => goToArea(area));
+    remove.addEventListener("click", () => { slide.areas.splice(slide.areas.indexOf(area), 1); renderAreas(); draw(); });
+    return row;
+  }));
+}
+
+// Capture: a frame over the main pane's slide, moved and resized by hand, saved at full resolution with the layers as shown
+let frame = null;  // the capture frame: its centre in slide px, and its sides in slide px along the screen's axes
+let frameDrag = null;  // what the press grabbed: {centre, start} to move it, {fixed} (opposite corner) to resize it
+// the last capture's shape, size (slide px) and corner, for the next, as the viewer keeps them
+const captureSettings = {shape: "free", portrait: false, size: null, corner: "bottom-left"};
+try { Object.assign(captureSettings, JSON.parse(localStorage.getItem("capture-settings"))); } catch {}
+const captureAspect = () => {
+  if (captureSettings.shape === "free") return null;
+  const [width, height] = captureSettings.shape.split(":").map(Number);
+  return captureSettings.portrait ? height / width : width / height;
+};
+// the frame on screen, in screen px
+const frameRect = () => {
+  const centre = toScreen(viewer, ...frame.centre), scale = screenScale();
+  return {left: centre.x - frame.width * scale / 2, top: centre.y - frame.height * scale / 2, width: frame.width * scale, height: frame.height * scale};
+};
+const setFrameRect = ({left, top, width, height}) => {
+  const scale = screenScale();
+  frame = {centre: slidePoint(new OpenSeadragon.Point(left + width / 2, top + height / 2)), width: width / scale, height: height / scale};
+};
+// fit `width` × `height` screen px to the frame's shape, no larger than 90% of the view, about the frame's centre
+function shapeFrame(width, height) {
+  const aspect = captureAspect(), view = viewer.viewport.getContainerSize();
+  if (aspect) [width, height] = width / height > aspect ? [height * aspect, height] : [width, width / aspect];
+  const shrink = Math.min(1, 0.9 * view.x / width, 0.9 * view.y / height);
+  const centre = frame ? toScreen(viewer, ...frame.centre) : {x: view.x / 2, y: view.y / 2};
+  setFrameRect({left: centre.x - width * shrink / 2, top: centre.y - height * shrink / 2, width: width * shrink, height: height * shrink});
+}
+// the frame opens on the view's centre, as large as the last one saved if that fits, else at 60% of the view
+function placeFrame() {
+  const view = viewer.viewport.getContainerSize(), scale = screenScale(), {size} = captureSettings;
+  frame = null;
+  if (size && size.width * scale <= 0.9 * view.x && size.height * scale <= 0.9 * view.y) shapeFrame(size.width * scale, size.height * scale);
+  else shapeFrame(0.6 * view.x, 0.6 * view.y);
+}
+// a typed side in µm; a fixed shape carries the other side along, and the view zooms out if the frame would not fit
+function setFrameMicrons(side, microns) {
+  if (microns > 0 && slide.mpp) {
+    const length = microns / slide.mpp, aspect = captureAspect();
+    if (side === "width") frame = {...frame, width: length, height: aspect ? length / aspect : frame.height};
+    else frame = {...frame, height: length, width: aspect ? length * aspect : frame.width};
+    fitFrameInView();
+  }
+  draw();
+}
+function fitFrameInView() {
+  const view = viewer.viewport.getContainerSize(), scale = screenScale();
+  const fit = Math.min(0.9 * view.x / (frame.width * scale), 0.9 * view.y / (frame.height * scale));
+  if (fit >= 1) return;
+  viewer.viewport.zoomTo(viewer.viewport.imageToViewportZoom(scale * fit), null, true);
+  viewer.viewport.panTo(viewer.viewport.imageToViewportCoordinates(...frame.centre), true);
+}
+// corners of the frame in slide px, clockwise from the top left on screen
+function frameRing() {
+  const turn = viewTurn(viewer), back = turn.inverse(), centre = turn.transformPoint({x: frame.centre[0], y: frame.centre[1]});
+  return [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([sx, sy]) => {
+    const {x, y} = back.transformPoint({x: centre.x + sx * frame.width / 2, y: centre.y + sy * frame.height / 2});
+    return [x, y];
+  });
+}
+// what a press at `position` grabs: a corner, the frame itself, or nothing (the slide pans)
+function frameHit(position) {
+  const {left, top, width, height} = frameRect();
+  const corners = [[left, top], [left + width, top], [left + width, top + height], [left, top + height]];
+  const corner = corners.findIndex(([x, y]) => Math.hypot(position.x - x, position.y - y) < 12);
+  if (corner >= 0) return {corner, fixed: slidePoint(new OpenSeadragon.Point(...corners[(corner + 2) % 4]))};
+  if (position.x > left && position.x < left + width && position.y > top && position.y < top + height) return {move: true};
+  return null;
+}
+viewer.addHandler("canvas-press", event => {
+  if (!capturing || !frame) return;
+  const hit = frameHit(event.position);
+  frameDrag = hit && {...hit, start: event.position, centre: toScreen(viewer, ...frame.centre)};
+});
+viewer.addHandler("canvas-drag", event => {
+  if (!capturing || !frameDrag) return;
+  event.preventDefaultAction = true;
+  if (frameDrag.move) {
+    const {centre, start} = frameDrag;
+    frame.centre = slidePoint(new OpenSeadragon.Point(centre.x + event.position.x - start.x, centre.y + event.position.y - start.y));
+  } else {
+    // the opposite corner stays put; a fixed shape grows to cover the pointer
+    const fixed = toScreen(viewer, ...frameDrag.fixed), aspect = captureAspect();
+    let [width, height] = [Math.max(8, Math.abs(event.position.x - fixed.x)), Math.max(8, Math.abs(event.position.y - fixed.y))];
+    if (aspect) [width, height] = width / height > aspect ? [width, width / aspect] : [height * aspect, height];
+    const [left, top] = [event.position.x < fixed.x ? fixed.x - width : fixed.x, event.position.y < fixed.y ? fixed.y - height : fixed.y];
+    setFrameRect({left, top, width, height});
+  }
+  draw();
+});
+viewer.addHandler("canvas-drag-end", event => { if (capturing && frameDrag) event.preventDefaultAction = true; });
+viewer.addHandler("canvas-click", event => { if (capturing) event.preventDefaultAction = true; });
+
+// the capture settings: picked as toggles, and kept for the next capture
+const showCaptureSettings = () => {
+  for (const button of $("capture-shape").querySelectorAll("[data-value]")) button.classList.toggle("active", button.dataset.value === captureSettings.shape);
+  $("capture-turn").classList.toggle("active", captureSettings.portrait);
+  for (const button of $("capture-corner").children) button.classList.toggle("active", button.dataset.value === captureSettings.corner);
+};
+const changeCaptureSettings = change => {
+  Object.assign(captureSettings, change);
+  try { localStorage.setItem("capture-settings", JSON.stringify(captureSettings)); } catch {}
+  showCaptureSettings();
+  if (capturing) draw();
+};
+for (const button of $("capture-shape").querySelectorAll("[data-value]")) {
+  button.addEventListener("click", () => {
+    changeCaptureSettings({shape: button.dataset.value});
+    const {width, height} = frameRect();
+    shapeFrame(width, height);
+    draw();
+  });
+}
+$("capture-turn").addEventListener("click", () => {
+  changeCaptureSettings({portrait: !captureSettings.portrait});
+  const {width, height} = frameRect();
+  shapeFrame(height, width);
+  draw();
+});
+// a side typed in µm is set on Enter or on leaving its box
+for (const side of ["width", "height"]) {
+  const input = $(`capture-${side}`);
+  input.addEventListener("change", () => setFrameMicrons(side, parseFloat(input.value.replace(",", "."))));
+  input.addEventListener("keydown", event => { if (event.key === "Enter") input.blur(); });
+}
+for (const button of $("capture-corner").children) button.addEventListener("click", () => changeCaptureSettings({corner: button.dataset.value}));
+showCaptureSettings();
+function saveFrame() {
+  changeCaptureSettings({size: {width: frame.width, height: frame.height}});
+  saveCapture(frameRing());
+}
+$("capture-save").addEventListener("click", saveFrame);
+
+async function saveCapture(ring) {
+  const turn = viewTurn(viewer), box = turnedBox(ring, turn), downsample = imageDownsample(box);
+  const [x, y] = [Math.round(Math.max(0, Math.min(...ring.map(([x]) => x)))), Math.round(Math.max(0, Math.min(...ring.map(([, y]) => y))))];
+  const name = `${slide.name}_x${x}_y${y}${downsample > 1 ? `_1to${downsample}` : ""}.png`;
+  const captured = slide, capturedLayers = layers, scale = screenScale(), caption = {corner: captureSettings.corner};
+  const setLoading = text => { $("loading").hidden = !text; $("loading").textContent = text; };
+  try {
+    await saveImage(name, async () => {
+      const {canvas} = await renderCapture(captured, capturedLayers, ring, turn, scale, caption, fraction => setLoading(`reading the capture: ${Math.round(fraction * 100)}%`));
+      setLoading("saving the capture…");
+      return canvas.convertToBlob({type: "image/png"});
+    });
+    setLoading("");
+  } catch (error) {
+    setLoading(`could not save the capture: ${error.message}`);
+  }
+}
 
 // saved where the user picks (Chrome) or as a download; whether it was saved
 async function saveFile(blob, suggestedName) {
@@ -2225,19 +2520,45 @@ let zoomText = "";
 
 const draw = () => panes.forEach(drawPane);
 
-// the eyepiece the magnification counts through, as the viewer keeps it (its field settings are the viewer's)
-const eyepiece = {power: 10};
+// the simulated eyepiece, shared with the viewer: its power, its field number (mm) and whether its field is shown,
+// as a circle across this share of the pane's shorter side
+const eyepiece = {power: 10, fieldNumber: 22, field: false};
 try { Object.assign(eyepiece, JSON.parse(localStorage.getItem("eyepiece"))); } catch {}
-const showEyepiece = () => { for (const button of $("eyepiece-power").children) button.classList.toggle("active", Number(button.dataset.value) === eyepiece.power); };
-for (const button of $("eyepiece-power").children) {
+const FIELD_FILL = 0.9;
+const showEyepiece = () => {
+  $("field").classList.toggle("active", eyepiece.field);
+  $("field-settings").hidden = !eyepiece.field;
+  for (const button of $("eyepiece-power").children) button.classList.toggle("active", Number(button.dataset.value) === eyepiece.power);
+  for (const button of $("field-number").children) button.classList.toggle("active", Number(button.dataset.value) === eyepiece.fieldNumber);
+};
+const changeEyepiece = change => {
+  Object.assign(eyepiece, change);
+  try { localStorage.setItem("eyepiece", JSON.stringify(eyepiece)); } catch {}
+  showEyepiece();
+  draw();
+};
+$("field").addEventListener("click", () => changeEyepiece({field: !eyepiece.field}));
+for (const button of $("eyepiece-power").children) button.addEventListener("click", () => changeEyepiece({power: Number(button.dataset.value)}));
+for (const button of $("field-number").children) button.addEventListener("click", () => changeEyepiece({fieldNumber: Number(button.dataset.value)}));
+showEyepiece();
+
+// preset magnifications, about the view's centre; they need the slide's pixel size. An objective's power:
+// the screen from 25 cm (where the eyepiece puts its image) looks like the eyepiece, or the circle shows its field
+const fieldDiameter = () => FIELD_FILL * Math.min(viewer.canvas.clientWidth, viewer.canvas.clientHeight);  // screen px
+const micronsPerScreenPxAtOneX = () => eyepiece.field ? eyepiece.fieldNumber * 1000 / fieldDiameter() : screenMmPerPx() * 1000 / eyepiece.power;
+const zoomScale = magnification => magnification * slide.mpp / micronsPerScreenPxAtOneX();  // screen px per slide px
+for (const button of $("zoom").children) {
   button.addEventListener("click", () => {
-    eyepiece.power = Number(button.dataset.value);
-    try { localStorage.setItem("eyepiece", JSON.stringify(eyepiece)); } catch {}
-    showEyepiece();
-    draw();
+    if (!slide?.mpp) return;
+    viewer.viewport.zoomTo(viewer.viewport.imageToViewportZoom(zoomScale(Number(button.dataset.zoom))));
   });
 }
-showEyepiece();
+const showZoom = scale => {
+  for (const button of $("zoom").children) {
+    button.disabled = !slide.mpp;
+    button.classList.toggle("active", !!slide.mpp && Math.abs(scale / zoomScale(Number(button.dataset.zoom)) - 1) < 0.02);
+  }
+};
 
 // the screen's mm per CSS px: as calibrated (kept per device px, so it holds when the page is zoomed),
 // else typical for the device: Android's dp, Apple's default display scaling, CSS's 1/96 inch
@@ -2280,6 +2601,231 @@ $("calibration").addEventListener("close", () => {
   draw();
 });
 
+// slide px -> screen-oriented slide px, and the box a ring spans in it
+const viewTurn = paneViewer => new DOMMatrix().scaleSelf(paneViewer.viewport.getFlip() ? -1 : 1, 1).rotateSelf(paneViewer.viewport.getRotation());
+function turnedBox(ring, turn) {
+  const points = ring.map(([x, y]) => turn.transformPoint({x, y}));
+  const xs = points.map(point => point.x), ys = points.map(point => point.y);
+  return {left: Math.min(...xs), top: Math.min(...ys), width: Math.max(...xs) - Math.min(...xs), height: Math.max(...ys) - Math.min(...ys)};
+}
+
+// a round length (1, 2 or 5 × 10ⁿ µm) no longer than `longest` µm
+const roundMicrons = longest => [5, 2, 1].map(factor => factor * 10 ** Math.floor(Math.log10(longest))).find(length => length <= longest);
+const micronsText = microns => microns >= 1000 ? `${+(microns / 1000).toFixed(3)} mm` : `${+microns.toFixed(3)} µm`;
+const lineLength = (fromSlide, [[x0, y0], [x1, y1]]) => {
+  const px = Math.hypot(x1 - x0, y1 - y0);
+  return fromSlide.mpp ? micronsText(+(px * fromSlide.mpp).toPrecision(3)) : `${Math.round(px)} px`;
+};
+
+// text upright at (x, y) in output px, outlined in black
+function outlinedText(ctx, text, x, y, color, size) {
+  ctx.lineWidth = 2.5 * size;
+  ctx.strokeStyle = "rgba(0, 0, 0, 0.7)";
+  ctx.strokeText(text, x, y);
+  ctx.fillStyle = color;
+  ctx.fillText(text, x, y);
+}
+
+// each measurement as a line with end ticks, its length (after its name, if any) beside its middle; `size` output px per screen px
+function drawMeasurements(ctx, fromSlide, lines, toOutput, size) {
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.lineJoin = ctx.lineCap = "round";
+  ctx.font = `500 ${13 * size}px system-ui, sans-serif`;
+  for (const line of lines) {
+    const [a, b] = line.ring.map(([x, y]) => toOutput.transformPoint({x, y}));
+    // ticks across the ends, and the label on the side of the line facing up
+    const length = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+    let [nx, ny] = [-(b.y - a.y) / length, (b.x - a.x) / length];
+    if (ny > 0) [nx, ny] = [-nx, -ny];
+    const path = new Path2D();
+    path.moveTo(a.x, a.y);
+    path.lineTo(b.x, b.y);
+    for (const {x, y} of [a, b]) {
+      path.moveTo(x - 6 * size * nx, y - 6 * size * ny);
+      path.lineTo(x + 6 * size * nx, y + 6 * size * ny);
+    }
+    ctx.strokeStyle = "rgba(0, 0, 0, 0.5)";
+    ctx.lineWidth = 3.5 * size;
+    ctx.stroke(path);
+    ctx.strokeStyle = line.color;
+    ctx.lineWidth = 1.5 * size;
+    ctx.stroke(path);
+    const label = [line.name, lineLength(fromSlide, line.ring)].filter(Boolean).join(": ");
+    ctx.textAlign = Math.abs(nx) < 0.3 ? "center" : nx < 0 ? "right" : "left";
+    ctx.textBaseline = "middle";
+    outlinedText(ctx, label, (a.x + b.x) / 2 + 14 * size * nx, (a.y + b.y) / 2 + 14 * size * ny, line.color, size);
+  }
+}
+
+// a capture's chosen corner: a black scale bar of a round length, at most a quarter of its width, its length above it.
+// `toOutput` places the capture's px, for the preview on screen
+function drawCaption(ctx, fromSlide, width, height, downsample, {corner}, toOutput = new DOMMatrix()) {
+  if (!fromSlide.mpp || corner === "none") return;
+  const size = Math.max(1, Math.max(width, height) / 1000);
+  const micronsPerPx = fromSlide.mpp * downsample;
+  const microns = roundMicrons(0.25 * width * micronsPerPx);
+  const barWidth = microns / micronsPerPx, barHeight = 3 * size, pad = 12 * size, textHeight = 16 * size;
+  const [right, bottom] = [corner.endsWith("right"), corner.startsWith("bottom")];
+  const [x, top] = [right ? width - pad : pad, bottom ? height - pad - textHeight - barHeight : pad];
+  ctx.setTransform(toOutput);
+  ctx.font = `600 ${13 * size}px system-ui, sans-serif`;
+  ctx.textAlign = right ? "right" : "left";
+  ctx.textBaseline = "middle";
+  ctx.fillStyle = "#000";
+  ctx.fillText(micronsText(microns), x, top + 0.4 * textHeight);
+  const [barLeft, barTop] = [right ? x - barWidth : x, top + textHeight];
+  ctx.fillRect(barLeft, barTop, barWidth, barHeight);
+  // small bars across the ends
+  const [tickWidth, tickHeight] = [2 * size, 3 * barHeight];
+  for (const tickLeft of [barLeft, barLeft + barWidth - tickWidth]) ctx.fillRect(tickLeft, barTop + (barHeight - tickHeight) / 2, tickWidth, tickHeight);
+}
+
+// a capture is saved as it looks on screen: turned and mirrored as the view is, at full resolution unless the browser cannot hold it
+const MAX_IMAGE_PIXELS = navigator.maxTouchPoints > 1 ? 16e6 : 100e6;  // what the browser's canvas holds (iPad Safari: 4096²)
+const MAX_IMAGE_SIDE = 16384;
+const IMAGE_PIECE = 2048;  // image px per side of the pieces the slide is read in, and its layers drawn in
+function imageDownsample({width, height}) {
+  let downsample = 1;
+  while (width * height / downsample ** 2 > MAX_IMAGE_PIXELS || Math.max(width, height) / downsample > MAX_IMAGE_SIDE) downsample *= 2;
+  return downsample;
+}
+
+// the layers over a capture, as on screen at `scale` screen px per slide px, drawn piece by piece so masking nuclei
+// to the regions needs only a piece-sized scratch canvas
+function drawCaptureLayers(context, captureLayers, toImagePx, scale) {
+  const {width, height} = context.canvas, back = toImagePx.inverse();
+  const piece = {ctx: document.createElement("canvas").getContext("2d")};
+  [piece.ctx.canvas.width, piece.ctx.canvas.height] = [Math.min(width, IMAGE_PIECE), Math.min(height, IMAGE_PIECE)];
+  for (let y = 0; y < height; y += IMAGE_PIECE) {
+    for (let x = 0; x < width; x += IMAGE_PIECE) {
+      piece.ctx.setTransform(1, 0, 0, 1, 0, 0);
+      piece.ctx.clearRect(0, 0, piece.ctx.canvas.width, piece.ctx.canvas.height);
+      piece.ctx.setTransform(new DOMMatrix().translateSelf(-x, -y).multiplySelf(toImagePx));
+      const corners = [[x, y], [x + IMAGE_PIECE, y], [x, y + IMAGE_PIECE], [x + IMAGE_PIECE, y + IMAGE_PIECE]].map(([px, py]) => back.transformPoint({x: px, y: py}));
+      const xs = corners.map(point => point.x), ys = corners.map(point => point.y);
+      drawLayers(piece, captureLayers, scale, {x: Math.min(...xs), y: Math.min(...ys)}, {x: Math.max(...xs), y: Math.max(...ys)});
+      context.setTransform(1, 0, 0, 1, 0, 0);
+      context.drawImage(piece.ctx.canvas, x, y);
+    }
+  }
+}
+
+// `screenScale` (screen px per slide px) sets the overlays' line widths, as on screen
+async function renderCapture(fromSlide, captureLayers, ring, turn, screenScale, caption, onProgress) {
+  const box = turnedBox(ring, turn), downsample = imageDownsample(box);
+  const canvas = new OffscreenCanvas(Math.max(1, Math.ceil(box.width / downsample)), Math.max(1, Math.ceil(box.height / downsample)));
+  const context = canvas.getContext("2d");
+  const toImagePx = new DOMMatrix().scaleSelf(1 / downsample).translateSelf(-box.left, -box.top).multiplySelf(turn);
+  context.setTransform(toImagePx);
+  const outline = new Path2D();
+  outline.moveTo(...ring[0]);
+  for (const point of ring) outline.lineTo(...point);
+  outline.closePath();
+  context.save();
+  context.clip(outline);
+  context.imageSmoothingQuality = "high";
+  if (fromSlide.background) {
+    context.fillStyle = fromSlide.background;
+    context.fillRect(0, 0, fromSlide.width, fromSlide.height);
+  }
+
+  // the ring's slide px box, read in pieces, each overlapping the next by a few px so no seams show once turned
+  const xs = ring.map(([x]) => x), ys = ring.map(([, y]) => y);
+  const [x0, y0] = [Math.max(0, Math.floor(Math.min(...xs))), Math.max(0, Math.floor(Math.min(...ys)))];
+  const [x1, y1] = [Math.min(fromSlide.width, Math.ceil(Math.max(...xs))), Math.min(fromSlide.height, Math.ceil(Math.max(...ys)))];
+  const [step, overlap] = [IMAGE_PIECE * downsample, 2 * downsample];
+  const pieces = [];
+  for (let y = y0; y < y1; y += step) for (let x = x0; x < x1; x += step) pieces.push([x, y]);
+  for (const [i, [x, y]] of pieces.entries()) {
+    const [left, top] = [Math.max(0, x - overlap), Math.max(0, y - overlap)];
+    const [right, bottom] = [Math.min(fromSlide.width, x + step + overlap), Math.min(fromSlide.height, y + step + overlap)];
+    context.setTransform(toImagePx.translate(left, top).scale(downsample));
+    await fromSlide.drawRegion(context, left, top, right, bottom, (right - left) / downsample, (bottom - top) / downsample);
+    onProgress((i + 1) / pieces.length);
+  }
+
+  // the layers and measurements as on screen, but never thinner than at 1 screen px per output px
+  const size = Math.max(1, 1 / (screenScale * downsample));  // output px per screen px
+  drawCaptureLayers(context, captureLayers, toImagePx, 1 / (downsample * size));
+  drawMeasurements(context, fromSlide, fromSlide.areas, toImagePx, size);
+  context.restore();
+  drawCaption(context, fromSlide, canvas.width, canvas.height, downsample, caption);
+  return {canvas, downsample};
+}
+
+// saved where the user picks (Chrome) or as a download; the picker opens first, while the click still allows it
+async function saveImage(suggestedName, render) {
+  try {
+    const handle = window.showSaveFilePicker ? await showSaveFilePicker({suggestedName, types: [{description: "PNG image", accept: {"image/png": [".png"]}}]}) : null;
+    const blob = await render();
+    if (handle) {
+      const writable = await handle.createWritable();
+      await writable.write(blob);
+      await writable.close();
+    } else {
+      const link = Object.assign(document.createElement("a"), {href: URL.createObjectURL(blob), download: suggestedName});
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(link.href), 60000);
+    }
+    return true;
+  } catch (error) {
+    if (error.name === "AbortError") return false;
+    throw error;
+  }
+}
+
+// the capture frame: the slide outside it darkened, handles on its corners, its caption as it will be saved,
+// and the image's size in the panel
+function drawFrame(ctx, dpr, width, height) {
+  const rect = frameRect(), box = turnedBox(frameRing(), viewTurn(viewer)), downsample = imageDownsample(box);
+  const [outWidth, outHeight] = [Math.max(1, Math.ceil(box.width / downsample)), Math.max(1, Math.ceil(box.height / downsample))];
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const shade = new Path2D();
+  shade.rect(0, 0, width, height);
+  shade.rect(rect.left, rect.top, rect.width, rect.height);
+  ctx.fillStyle = "rgba(0, 0, 0, 0.55)";
+  ctx.fill(shade, "evenodd");
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(rect.left, rect.top, rect.width, rect.height);
+  ctx.clip();
+  const outputScale = rect.width / outWidth;  // screen px per image px
+  drawCaption(ctx, slide, outWidth, outHeight, downsample, captureSettings, new DOMMatrix([dpr, 0, 0, dpr, 0, 0]).translate(rect.left, rect.top).scale(outputScale));
+  ctx.restore();
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = "#fff";
+  ctx.strokeRect(rect.left, rect.top, rect.width, rect.height);
+  ctx.fillStyle = "#fff";
+  ctx.strokeStyle = "rgba(0, 0, 0, 0.7)";
+  for (const [x, y] of [[rect.left, rect.top], [rect.left + rect.width, rect.top], [rect.left + rect.width, rect.top + rect.height], [rect.left, rect.top + rect.height]]) {
+    ctx.fillRect(x - 5, y - 5, 10, 10);
+    ctx.strokeRect(x - 5, y - 5, 10, 10);
+  }
+  for (const [side, length] of [["width", box.width], ["height", box.height]]) {
+    const input = $(`capture-${side}`);
+    input.disabled = !slide.mpp;
+    if (document.activeElement !== input) input.value = slide.mpp ? +(length * slide.mpp).toPrecision(4) : "";
+  }
+  $("capture-size").textContent = `${outWidth.toLocaleString()} × ${outHeight.toLocaleString()} px` + (downsample > 1 ? ` — too large for this browser at full resolution, so saved at 1/${downsample}` : "");
+  $("capture-size").classList.toggle("warn", downsample > 1);
+}
+
+// the microscope field: the slide outside a centred circle dimmed
+function drawField(ctx, dpr, width, height) {
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const shade = new Path2D();
+  shade.rect(0, 0, width, height);
+  shade.arc(width / 2, height / 2, fieldDiameter() / 2, 0, 2 * Math.PI);
+  ctx.fillStyle = "rgba(0, 0, 0, 0.4)";
+  ctx.fill(shade, "evenodd");
+  ctx.beginPath();
+  ctx.arc(width / 2, height / 2, fieldDiameter() / 2, 0, 2 * Math.PI);
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.3)";
+  ctx.stroke();
+}
+
 // a cleared canvas the size of the pane's overlay, with its transform, for drawing before compositing
 function paneScratch(pane, name) {
   const {ctx} = pane, scratch = pane[name] ??= document.createElement("canvas").getContext("2d");
@@ -2314,7 +2860,7 @@ function composeNuclei(pane, nucleiCtx, rings, depths) {
 }
 
 // the layers are drawn on both panes, since compared slides share the slide px frame
-// the slide's metadata, and a scale bar of a round length (1, 2 or 5 × 10ⁿ µm) at most 120 screen px long
+// the slide's metadata, and a scale bar of a round length at most 120 screen px long
 let infoSlide = null;
 function renderInfo(scale) {
   $("info").hidden = false;
@@ -2329,14 +2875,77 @@ function renderInfo(scale) {
   $("scale").hidden = !slide.mpp;
   if (!slide.mpp) return;
   const micronsPerScreenPx = slide.mpp / scale;
-  const longest = 120 * micronsPerScreenPx;
-  const microns = [5, 2, 1].map(factor => factor * 10 ** Math.floor(Math.log10(longest))).find(length => length <= longest);
+  const microns = roundMicrons(120 * micronsPerScreenPx);
   $("scale-bar").style.width = `${microns / micronsPerScreenPx}px`;
-  $("scale-label").textContent = microns >= 1000 ? `${+(microns / 1000).toFixed(3)} mm` : `${+microns.toFixed(3)} µm`;
+  $("scale-label").textContent = micronsText(microns);
 }
 // the info box opens as it was last left, or open on wide screens
 try { $("metadata").open = (localStorage.getItem("slide-info-open") ?? String(innerWidth >= 700)) === "true"; } catch { $("metadata").open = innerWidth >= 700; }
 $("metadata").addEventListener("toggle", () => { try { localStorage.setItem("slide-info-open", $("metadata").open); } catch {} });
+
+// the layers' nuclei, labels and annotations on target.ctx, whose transform maps slide px; `scale` (screen px per slide px)
+// sets their line widths and whether nuclei show as outlines, and only nuclei in the slide px box topLeft-bottomRight are stroked
+function drawLayers(target, layerList, scale, topLeft, bottomRight) {
+  const {ctx} = target;
+  ctx.lineJoin = "round";
+
+  // zoomed out, nuclei are drawn as their dot maps: blended when a dot is under an output px, crisp when larger
+  const nucleiTooSmall = scale < MIN_DETECTION_SCALE;
+  const transform = ctx.getTransform();
+  ctx.imageSmoothingEnabled = Math.hypot(transform.a, transform.b) * OVERVIEW < 1;
+  // annotations such as ROIs go last, with a dark halo, so nuclei never hide them
+  const previewClasses = layer => [...layer.preview?.classes.values() ?? []].filter(cls => layer.classes.get(cls.name)?.visible ?? true);
+  const visibleClasses = layerList.flatMap(layer => [...layer.classes.values(), ...previewClasses(layer)]).filter(cls => cls.visible);
+  // halos go under the class outlines, but over the class dots so uncertain areas show when zoomed out
+  const order = cls => !cls.detection ? 3 : cls.halo ? (nucleiTooSmall ? 2 : 0) : 1;
+  // with regions shown, nuclei are drawn offscreen first, then kept only inside the regions
+  const {rings, depths} = shownRegions(layerList);
+  const nucleiCtx = rings.length ? paneScratch(target, "nucleiCtx") : ctx;
+  const sorted = visibleClasses.sort((a, b) => order(a) - order(b));
+  for (const cls of sorted.filter(cls => cls.detection)) {
+    if (nucleiTooSmall) {
+      const {canvas} = cls.overview;
+      nucleiCtx.drawImage(canvas, 0, 0, canvas.width * OVERVIEW, canvas.height * OVERVIEW);
+      continue;
+    }
+    nucleiCtx.strokeStyle = `rgb(${cls.color})`;
+    nucleiCtx.lineWidth = 1.5 / scale;
+    for (const path of visiblePaths(cls, topLeft, bottomRight)) nucleiCtx.stroke(path);
+  }
+  if (rings.length) composeNuclei(target, nucleiCtx, rings, depths);
+  for (const cls of sorted.filter(cls => !cls.detection)) {
+    ctx.strokeStyle = "rgba(0, 0, 0, 0.7)";
+    ctx.lineWidth = 6 / scale;
+    for (const path of cls.paths.values()) ctx.stroke(path);
+    ctx.strokeStyle = `rgb(${cls.color})`;
+    ctx.lineWidth = 3 / scale;
+    for (const path of cls.paths.values()) ctx.stroke(path);
+  }
+  if (!nucleiTooSmall) {
+    const inView = (x, y) => x > topLeft.x - 50 && x < bottomRight.x + 50 && y > topLeft.y - 50 && y < bottomRight.y + 50;
+    for (const layer of layerList) for (const [i, label] of layer.labels ?? []) {
+      const x = layer.nuclei.x[i], y = layer.nuclei.y[i], radius = layer.nuclei.radius[i] - HALO_GAP;
+      if (!inView(x, y)) continue;
+      ctx.beginPath();
+      ctx.arc(x, y, radius, 0, 2 * Math.PI);
+      ctx.fillStyle = `rgba(${labelColor(layer, label)}, 0.45)`;
+      ctx.fill();
+      ctx.strokeStyle = `rgb(${labelColor(layer, label)})`;
+      ctx.lineWidth = 2.5 / scale;
+      ctx.stroke();
+    }
+  }
+  if (selected && layerList.includes(selected.layer)) {
+    const {nuclei} = selected.layer, i = selected.i;
+    ctx.beginPath();
+    ctx.arc(nuclei.x[i], nuclei.y[i], nuclei.radius[i] + 3, 0, 2 * Math.PI);
+    ctx.setLineDash([5 / scale, 3 / scale]);
+    ctx.strokeStyle = `rgb(${SELECTED_COLOR})`;
+    ctx.lineWidth = 2.5 / scale;
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+}
 
 function drawPane(pane) {
   const {viewer, ctx} = pane;
@@ -2352,67 +2961,16 @@ function drawPane(pane) {
   const origin = toScreen(viewer, 0, 0), alongX = toScreen(viewer, 1, 0), alongY = toScreen(viewer, 0, 1);
   const scale = Math.hypot(alongX.x - origin.x, alongX.y - origin.y);
   const {topLeft, bottomRight} = onScreen(viewer);
-  ctx.setTransform((alongX.x - origin.x) * dpr, (alongX.y - origin.y) * dpr, (alongY.x - origin.x) * dpr, (alongY.y - origin.y) * dpr, origin.x * dpr, origin.y * dpr);
-  ctx.lineJoin = "round";
-
-  // zoomed out, nuclei are drawn as their dot maps: blended when a dot is under a screen px, crisp when larger
-  const nucleiTooSmall = scale < MIN_DETECTION_SCALE;
-  ctx.imageSmoothingEnabled = scale * OVERVIEW * dpr < 1;
-  // annotations such as ROIs go last, with a dark halo, so nuclei never hide them
-  const previewClasses = layer => [...layer.preview?.classes.values() ?? []].filter(cls => layer.classes.get(cls.name)?.visible ?? true);
-  const visibleClasses = layers.flatMap(layer => [...layer.classes.values(), ...previewClasses(layer)]).filter(cls => cls.visible);
-  // halos go under the class outlines, but over the class dots so uncertain areas show when zoomed out
-  const order = cls => !cls.detection ? 3 : cls.halo ? (nucleiTooSmall ? 2 : 0) : 1;
-  // with regions shown, nuclei are drawn offscreen first, then kept only inside the regions
-  const {rings, depths} = shownRegions();
-  const nucleiCtx = rings.length ? paneScratch(pane, "nucleiCtx") : ctx;
-  const sorted = visibleClasses.sort((a, b) => order(a) - order(b));
-  for (const cls of sorted.filter(cls => cls.detection)) {
-    if (nucleiTooSmall) {
-      const {canvas} = cls.overview;
-      nucleiCtx.drawImage(canvas, 0, 0, canvas.width * OVERVIEW, canvas.height * OVERVIEW);
-      continue;
-    }
-    nucleiCtx.strokeStyle = `rgb(${cls.color})`;
-    nucleiCtx.lineWidth = 1.5 / scale;
-    for (const path of visiblePaths(cls, topLeft, bottomRight)) nucleiCtx.stroke(path);
-  }
-  if (rings.length) composeNuclei(pane, nucleiCtx, rings, depths);
-  for (const cls of sorted.filter(cls => !cls.detection)) {
-    ctx.strokeStyle = "rgba(0, 0, 0, 0.7)";
-    ctx.lineWidth = 6 / scale;
-    for (const path of cls.paths.values()) ctx.stroke(path);
-    ctx.strokeStyle = `rgb(${cls.color})`;
-    ctx.lineWidth = 3 / scale;
-    for (const path of cls.paths.values()) ctx.stroke(path);
-  }
-  if (!nucleiTooSmall) {
-    const inView = (x, y) => x > topLeft.x - 50 && x < bottomRight.x + 50 && y > topLeft.y - 50 && y < bottomRight.y + 50;
-    for (const layer of layers) for (const [i, label] of layer.labels ?? []) {
-      const x = layer.nuclei.x[i], y = layer.nuclei.y[i], radius = layer.nuclei.radius[i] - HALO_GAP;
-      if (!inView(x, y)) continue;
-      ctx.beginPath();
-      ctx.arc(x, y, radius, 0, 2 * Math.PI);
-      ctx.fillStyle = `rgba(${labelColor(layer, label)}, 0.45)`;
-      ctx.fill();
-      ctx.strokeStyle = `rgb(${labelColor(layer, label)})`;
-      ctx.lineWidth = 2.5 / scale;
-      ctx.stroke();
-    }
-  }
-  if (selected && layers.includes(selected.layer)) {
-    const {nuclei} = selected.layer, i = selected.i;
-    ctx.beginPath();
-    ctx.arc(nuclei.x[i], nuclei.y[i], nuclei.radius[i] + 3, 0, 2 * Math.PI);
-    ctx.setLineDash([5 / scale, 3 / scale]);
-    ctx.strokeStyle = `rgb(${SELECTED_COLOR})`;
-    ctx.lineWidth = 2.5 / scale;
-    ctx.stroke();
-    ctx.setLineDash([]);
-  }
+  const toDevice = new DOMMatrix([(alongX.x - origin.x) * dpr, (alongX.y - origin.y) * dpr, (alongY.x - origin.x) * dpr, (alongY.y - origin.y) * dpr, origin.x * dpr, origin.y * dpr]);
+  ctx.setTransform(toDevice);
+  drawLayers(pane, layers, scale, topLeft, bottomRight);
+  drawMeasurements(ctx, slide, slide.areas, toDevice, dpr);
+  if (measuring && measureStart && pointer && viewer === panes[0].viewer) drawMeasurements(ctx, slide, [{color: LINE_COLOR, ring: [measureStart, pointer]}], toDevice, dpr);
+  if (eyepiece.field && !capturing) drawField(ctx, dpr, width, height);
   if (viewer !== panes[0].viewer) return;
 
   // the ROI being drawn, with a line to the pointer and its first corner filled when a click would close it
+  ctx.setTransform(toDevice);
   if (draft.length) {
     const path = new Path2D();
     path.moveTo(...draft[0]);
@@ -2431,9 +2989,11 @@ function drawPane(pane) {
     ctx.fill();
     ctx.stroke();
   }
-  $("hint").hidden = !(nucleiTooSmall && layers.some(layer => [...layer.classes.values()].some(cls => cls.detection && cls.visible)));
-  // as through an objective of this power: the screen from 25 cm, where the eyepiece puts its image, looks like the eyepiece
-  zoomText = slide.mpp ? `${(scale * screenMmPerPx() * 1000 / eyepiece.power / slide.mpp).toFixed(1)}×` : `${scale.toFixed(2)} screen px/px`;
+  if (capturing && frame) drawFrame(ctx, dpr, width, height);
+  $("hint").hidden = !(scale < MIN_DETECTION_SCALE && layers.some(layer => [...layer.classes.values()].some(cls => cls.detection && cls.visible)));
+  zoomText = slide.mpp ? `${(scale * micronsPerScreenPxAtOneX() / slide.mpp).toFixed(1)}×` : `${scale.toFixed(2)} screen px/px`;
+  if (slide.mpp && eyepiece.field) zoomText += `, field ⌀ ${micronsText(+(fieldDiameter() * slide.mpp / scale).toPrecision(2))}`;
+  showZoom(scale);
   $("status").textContent = [cursorText, zoomText].filter(Boolean).join("  ·  ");
   renderInfo(scale);
 }
@@ -2443,9 +3003,19 @@ for (const {viewer} of panes) new OpenSeadragon.MouseTracker({
   moveHandler: event => {
     if (!slide || !viewer.world.getItemCount()) return;
     const point = toImage(viewer, event.position);
-    if (drawing && viewer === panes[0].viewer) {
-      pointer = [point.x, point.y];
-      if (draft.length) draw();
+    if (viewer === panes[0].viewer) {
+      if (drawing) {
+        pointer = [point.x, point.y];
+        if (draft.length) draw();
+      }
+      if (measuring && measureStart && !pressed) {
+        pointer = measureEnd(event.position, event.originalEvent?.shiftKey);
+        draw();
+      }
+      if (capturing && frame && !event.originalEvent?.buttons) {
+        const hit = frameHit(event.position);
+        viewer.canvas.style.cursor = !hit ? "" : hit.move ? "move" : hit.corner % 2 ? "nesw-resize" : "nwse-resize";
+      }
     }
     cursorText = `x ${Math.round(point.x)}  y ${Math.round(point.y)} px`;
     $("status").textContent = [cursorText, zoomText].join("  ·  ");
