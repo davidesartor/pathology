@@ -1,8 +1,10 @@
 """Both pages: zoom presets as through an objective, the microscope field, measurements, and the capture frame's shape and size."""
 import numpy as np
+from PIL import Image
 from playwright.sync_api import Page
 
-from conftest import drag, open_files, settle, wait_for
+from conftest import drag, open_files, open_folder, set_view, settle, wait_for
+from slides import write_mrxs
 from test_slides import screenshot
 
 
@@ -22,6 +24,20 @@ def test_capture_frame_keeps_its_shape_and_settings(app: Page, tiffs):
     size = app.locator("#capture-size").text_content()
     width, height = (int(n.replace(",", "")) for n in size.split(" px")[0].split(" × "))
     assert abs(width / height - 4 / 3) < 0.01, size
+
+
+def test_capture_has_no_seams_between_mrxs_photos(app: Page, tmp_path):
+    """Turned, a capture of a flat gray MRXS slide is flat gray inside: the white fill never shows between its camera images."""
+    open_folder(app, write_mrxs(tmp_path, "flat", (128, 160), (6, 6), 2, None, 0, gray=200))
+    set_view(app, 30, False)
+    app.click("#capture")
+    app.click("#capture-corner [data-value='none']")
+    with app.expect_download() as download:
+        app.click("#capture-save")
+    got = np.asarray(Image.open(download.value.path()).convert("RGB")).astype(int)
+    height, width = got.shape[:2]
+    inside = got[height // 3:2 * height // 3, width // 3:2 * width // 3]
+    assert np.abs(inside - 200).max() <= 2, np.abs(inside - 200).max()
 
 
 def test_capture_size_in_microns(app: Page, tiffs):

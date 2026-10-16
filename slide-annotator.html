@@ -2736,11 +2736,22 @@ async function renderCapture(fromSlide, captureLayers, ring, turn, screenScale, 
   const [step, overlap] = [IMAGE_PIECE * downsample, 2 * downsample];
   const pieces = [];
   for (let y = y0; y < y1; y += step) for (let x = x0; x < x1; x += step) pieces.push([x, y]);
+  // each piece is read upright on whole px first, as the screen's tiles are, so the camera images of an MRXS slide
+  // meet without the background showing between them along their antialiased edges once turned or shifted
+  const scratch = new OffscreenCanvas(IMAGE_PIECE + 2 * overlap / downsample, IMAGE_PIECE + 2 * overlap / downsample).getContext("2d");
+  scratch.imageSmoothingQuality = "high";
   for (const [i, [x, y]] of pieces.entries()) {
     const [left, top] = [Math.max(0, x - overlap), Math.max(0, y - overlap)];
     const [right, bottom] = [Math.min(fromSlide.width, x + step + overlap), Math.min(fromSlide.height, y + step + overlap)];
+    const [width, height] = [Math.ceil((right - left) / downsample), Math.ceil((bottom - top) / downsample)];
+    scratch.clearRect(0, 0, scratch.canvas.width, scratch.canvas.height);
+    if (fromSlide.background) {
+      scratch.fillStyle = fromSlide.background;
+      scratch.fillRect(0, 0, width, height);
+    }
+    await fromSlide.drawRegion(scratch, left, top, left + width * downsample, top + height * downsample, width, height);
     context.setTransform(toImagePx.translate(left, top).scale(downsample));
-    await fromSlide.drawRegion(context, left, top, right, bottom, (right - left) / downsample, (bottom - top) / downsample);
+    context.drawImage(scratch.canvas, 0, 0, width, height, 0, 0, width, height);
     onProgress((i + 1) / pieces.length);
   }
 
