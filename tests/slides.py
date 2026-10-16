@@ -38,16 +38,18 @@ def write_tiff(path: Path, image: UInt8[np.ndarray, "H W 3"], levels: int, subif
 
 
 def write_mrxs(root: Path, name: str, photo: tuple[int, int], grid: tuple[int, int], levels: int, positions: np.ndarray | None,
-               overlap: int, missing: set[int] = frozenset(), seed: int = 1) -> Path:
+               overlap: int, missing: set[int] = frozenset(), seed: int = 1, gray: int | None = None) -> Path:
     """MIRAX slide: root/name.mrxs and root/name/{Slidedat.ini, Index.dat, Data0000.dat}, laid out as OpenSlide reads it.
 
     positions (Y X 2, level-0 px) go in a VIMSLIDE_POSITION_BUFFER; None leaves the nominal grid. Photos in `missing` are not scanned.
+    `gray` makes every photo that flat gray instead of the pattern.
     """
     (photo_height, photo_width), (images_y, images_x) = photo, grid
     folder = root / name
     folder.mkdir(parents=True)
     (root / f"{name}.mrxs").write_bytes(b"")
-    photos = rearrange(pattern(images_y * photo_height, images_x * photo_width, seed), "(y h) (x w) c -> y x h w c", h=photo_height, w=photo_width)
+    image = pattern(images_y * photo_height, images_x * photo_width, seed) if gray is None else np.full((images_y * photo_height, images_x * photo_width, 3), gray, np.uint8)
+    photos = rearrange(image, "(y h) (x w) c -> y x h w c", h=photo_height, w=photo_width)
 
     data = bytearray()
     def store(blob: bytes) -> tuple[int, int]:
