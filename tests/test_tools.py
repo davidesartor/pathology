@@ -38,6 +38,14 @@ def test_capture_has_no_seams_between_mrxs_photos(app: Page, tmp_path):
     height, width = got.shape[:2]
     inside = got[height // 3:2 * height // 3, width // 3:2 * width // 3]
     assert np.abs(inside - 200).max() <= 2, np.abs(inside - 200).max()
+    # unturned, GPU canvases antialias too: a region read from an odd px at half size, as a downsampled capture reads it,
+    # still places every camera image on whole px
+    rects = app.evaluate("""async () => {
+        const rects = [];
+        await slide.drawRegion({drawImage: (...args) => rects.push(args.slice(5))}, 101, 101, 1101, 701, 500, 300);
+        return rects;
+    }""")
+    assert rects and all(value == round(value) for rect in rects for value in rect), rects
 
 
 def test_capture_size_in_microns(app: Page, tiffs):

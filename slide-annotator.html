@@ -1342,9 +1342,12 @@ async function openMRXS(folder) {
     const {downsample, tileWidth, tileHeight, tilesIn} = levels.findLast(level => level.downsample <= scale * 1.01) ?? levels[0];
     const tiles = tilesIn(x0, y0, x1, y1);
     const bitmaps = await Promise.all(tiles.map(tile => decode(tile.image)));
-    for (const [i, tile] of tiles.entries())
-      context.drawImage(bitmaps[i], tile.sourceX, tile.sourceY, tileWidth, tileHeight,
-        (tile.left - x0) / scale, (tile.top - y0) / scale, tileWidth * downsample / scale, tileHeight * downsample / scale);
+    // each image's edges rounded to whole output px, so neighbours meet exactly and the fill never shows between their antialiased edges
+    for (const [i, tile] of tiles.entries()) {
+      const [left, top] = [Math.round((tile.left - x0) / scale), Math.round((tile.top - y0) / scale)];
+      const [right, bottom] = [Math.round((tile.left + tileWidth * downsample - x0) / scale), Math.round((tile.top + tileHeight * downsample - y0) / scale)];
+      context.drawImage(bitmaps[i], tile.sourceX, tile.sourceY, tileWidth, tileHeight, left, top, right - left, bottom - top);
+    }
   }
 
   const bgr = Number(sections[0].IMAGE_FILL_COLOR_BGR);
