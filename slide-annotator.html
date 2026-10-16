@@ -847,6 +847,8 @@ try {
 const CELL = 2048;  // slide px per side of the grid nuclei are bucketed in, so panning strokes only what is on screen
 const OVERVIEW = 16;  // slide px per pixel of the dot map nuclei are drawn as when zoomed out
 const MIN_DETECTION_SCALE = 0.4;  // screen px per slide px below which outlines are a few px wide: unreadable, and slow to stroke
+const DOT_RADIUS = 3;  // screen px: the least radius nuclei are drawn at as dots once outlines are too small, so they show on any slide
+const DOT_TILE_PIXELS = 32e6;  // px of nucleus dots kept drawn, per cell and zoom step, for redrawing as the view moves
 const DEFAULT_COLOR = [255, 255, 0];
 const UNCERTAIN = "uncertain class";
 const HALO_COLOR = [255, 255, 255];
@@ -1523,11 +1525,27 @@ function newOverview({width, height}, color) {
   return {canvas, context};
 }
 
+// a nucleus as a dot: its centre and radius in slide px, kept by the grid cell its centre is in
+function addDot(cls, x, y, radius) {
+  const key = `${Math.floor(x / CELL)},${Math.floor(y / CELL)}`;
+  (cls.dots.get(key) ?? cls.dots.set(key, []).get(key)).push(x, y, radius);
+}
+
+// a detection class emptied: its outlines, dot map and dots
+function clearNuclei(cls) {
+  cls.paths.clear();
+  cls.overview.context.clearRect(0, 0, cls.overview.canvas.width, cls.overview.canvas.height);
+  cls.dots.clear();
+  cls.dotsCleared++;
+}
+
 // polygons grouped by classification, as one Path2D per class (and per grid cell for nuclei) in slide px
+let classCount = 0;
 function layerClass(layer, name, color, detection) {
   if (!layer.classes.has(name)) layer.classes.set(name, {
     name, color, detection, count: 0, visible: true, paths: new Map(),
     overview: detection ? newOverview(layer.slide, color) : null,
+    id: ++classCount, dots: new Map(), dotsCleared: 0,
   });
   return layer.classes.get(name);
 }
@@ -1547,6 +1565,7 @@ function addPolygon(cls, polygon) {
     const x = exterior.reduce((sum, point) => sum + point[0], 0) / exterior.length;
     const y = exterior.reduce((sum, point) => sum + point[1], 0) / exterior.length;
     cls.overview.context.fillRect(Math.floor(x / OVERVIEW), Math.floor(y / OVERVIEW), 1, 1);
+    addDot(cls, x, y, Math.sqrt(ringArea(exterior) / Math.PI));
     (cls.centres ??= []).push(x, y);
   }
 }
@@ -1591,8 +1610,7 @@ function updateHalo(layer, from = 0) {
   const halo = layerClass(layer, UNCERTAIN, HALO_COLOR, true);
   halo.halo = true;
   if (!from) {
-    halo.paths.clear();
-    halo.overview.context.clearRect(0, 0, halo.overview.canvas.width, halo.overview.canvas.height);
+    clearNuclei(halo);
     [halo.count, halo.review, halo.next] = [0, [], 0];
   }
   const marginBelow = Number($("margin").value);
@@ -1605,6 +1623,7 @@ function updateHalo(layer, from = 0) {
     halo.paths.get(key).moveTo(x + radius, y);
     halo.paths.get(key).arc(x, y, radius, 0, 2 * Math.PI);
     halo.overview.context.fillRect(Math.floor(x / OVERVIEW), Math.floor(y / OVERVIEW), 1, 1);
+    addDot(halo, x, y, radius);
     halo.count++;
     halo.review.push({i, margin: top - second});
   }
@@ -2903,10 +2922,13 @@ function drawLayers(target, layerList, scale, topLeft, bottomRight) {
   const {ctx} = target;
   ctx.lineJoin = "round";
 
-  // zoomed out, nuclei are drawn as their dot maps: blended when a dot is under an output px, crisp when larger
+  // zoomed out, nuclei are drawn as round dots, cell by cell; further out, where a dot map px is under an output px, as their blended dot maps
   const nucleiTooSmall = scale < MIN_DETECTION_SCALE;
-  const transform = ctx.getTransform();
-  ctx.imageSmoothingEnabled = Math.hypot(transform.a, transform.b) * OVERVIEW < 1;
+  const transform = ctx.getTransform(), outputScale = Math.hypot(transform.a, transform.b);
+  const dots = nucleiTooSmall && outputScale * OVERVIEW >= 1;
+  ctx.imageSmoothingEnabled = dots || outputScale * OVERVIEW < 1;
+  // on screen, dots not drawn yet wait for later frames, so zooming out stays smooth; a capture draws them all
+  const dotBudget = {until: target.viewer ? performance.now() + 20 : Infinity, missing: false};
   // annotations such as ROIs go last, with a dark halo, so nuclei never hide them
   const previewClasses = layer => [...layer.preview?.classes.values() ?? []].filter(cls => layer.classes.get(cls.name)?.visible ?? true);
   const visibleClasses = layerList.flatMap(layer => [...layer.classes.values(), ...previewClasses(layer)]).filter(cls => cls.visible);
@@ -2917,6 +2939,10 @@ function drawLayers(target, layerList, scale, topLeft, bottomRight) {
   const nucleiCtx = rings.length ? paneScratch(target, "nucleiCtx") : ctx;
   const sorted = visibleClasses.sort((a, b) => order(a) - order(b));
   for (const cls of sorted.filter(cls => cls.detection)) {
+    if (dots) {
+      drawDots(nucleiCtx, cls, outputScale, outputScale / scale, topLeft, bottomRight, dotBudget);
+      continue;
+    }
     if (nucleiTooSmall) {
       const {canvas} = cls.overview;
       nucleiCtx.drawImage(canvas, 0, 0, canvas.width * OVERVIEW, canvas.height * OVERVIEW);
@@ -2927,6 +2953,10 @@ function drawLayers(target, layerList, scale, topLeft, bottomRight) {
     for (const path of visiblePaths(cls, topLeft, bottomRight)) nucleiCtx.stroke(path);
   }
   if (rings.length) composeNuclei(target, nucleiCtx, rings, depths);
+  if (dotBudget.missing && !dotsPending) {
+    dotsPending = true;
+    requestAnimationFrame(() => { dotsPending = false; draw(); });
+  }
   for (const cls of sorted.filter(cls => !cls.detection)) {
     ctx.strokeStyle = "rgba(0, 0, 0, 0.7)";
     ctx.lineWidth = 6 / scale;
@@ -2958,6 +2988,67 @@ function drawLayers(target, layerList, scale, topLeft, bottomRight) {
     ctx.lineWidth = 2.5 / scale;
     ctx.stroke();
     ctx.setLineDash([]);
+  }
+}
+
+// nucleus dots drawn per class, grid cell and zoom step, least recently used first out; each remembers the dots it was drawn from
+const dotTiles = new Map();
+let dotTilePixels = 0, dotsPending = false;
+
+// a cell's dots at `zoom` px per slide px: each nucleus filled at its own size, but never under `least` px in radius,
+// with a margin for those reaching over the cell's edges, so neighbouring tiles overlap
+function dotTile(list, color, zoom, least, stamp) {
+  let pad = least;
+  for (let i = 2; i < list.length; i += 3) pad = Math.max(pad, list[i] * zoom);
+  pad = Math.ceil(pad);
+  const size = Math.ceil(CELL * zoom) + 2 * pad, canvas = new OffscreenCanvas(size, size), context = canvas.getContext("2d");
+  context.fillStyle = `rgb(${color})`;
+  context.translate(pad, pad);
+  context.beginPath();
+  const [x0, y0] = [Math.floor(list[0] / CELL) * CELL, Math.floor(list[1] / CELL) * CELL];
+  for (let i = 0; i < list.length; i += 3) {
+    const [x, y, radius] = [(list[i] - x0) * zoom, (list[i + 1] - y0) * zoom, Math.max(list[i + 2] * zoom, least)];
+    context.moveTo(x + radius, y);
+    context.arc(x, y, radius, 0, 2 * Math.PI);
+  }
+  context.fill();
+  return {canvas, pad, stamp, pixels: size * size};
+}
+
+// a class's nuclei in the slide px box topLeft-bottomRight as round dots, at least DOT_RADIUS screen px across: `outputScale` output px
+// per slide px, `outputPerScreen` output px per screen px. Cells past the budget's time are drawn from the dot map for now
+function drawDots(context, cls, outputScale, outputPerScreen, topLeft, bottomRight, budget) {
+  // drawn at the zoom step (half an octave) at or above the output's, so only ever scaled down, and up to 1/√2
+  const zoom = Math.min(0.5, 2 ** (Math.ceil(2 * Math.log2(outputScale)) / 2));
+  const least = DOT_RADIUS * outputPerScreen * 1.2;
+  // the cells around the box too, whose dots may reach into it
+  for (let cy = Math.floor(topLeft.y / CELL) - 1; cy <= Math.floor(bottomRight.y / CELL) + 1; cy++)
+    for (let cx = Math.floor(topLeft.x / CELL) - 1; cx <= Math.floor(bottomRight.x / CELL) + 1; cx++) {
+      const list = cls.dots.get(`${cx},${cy}`);
+      if (!list) continue;
+      const key = `${cls.id}|${zoom}|${least}|${cx},${cy}`, stamp = `${cls.dotsCleared}|${list.length}`;
+      let tile = dotTiles.get(key);
+      if (tile) dotTiles.delete(key);
+      if (tile?.stamp !== stamp && performance.now() < budget.until) {
+        if (tile) dotTilePixels -= tile.pixels;
+        tile = dotTile(list, cls.color, zoom, least, stamp);
+        dotTilePixels += tile.pixels;
+      }
+      if (tile) {
+        dotTiles.set(key, tile);
+        if (tile.stamp !== stamp) budget.missing = true;
+        const pad = tile.pad / zoom;
+        context.drawImage(tile.canvas, cx * CELL - pad, cy * CELL - pad, tile.canvas.width / zoom, tile.canvas.height / zoom);
+      } else {
+        budget.missing = true;
+        const [source, side] = [cls.overview.canvas, CELL / OVERVIEW];
+        context.drawImage(source, cx * side, cy * side, side, side, cx * CELL, cy * CELL, CELL, CELL);
+      }
+    }
+  for (const [key, tile] of dotTiles) {
+    if (dotTilePixels <= DOT_TILE_PIXELS) break;
+    dotTiles.delete(key);
+    dotTilePixels -= tile.pixels;
   }
 }
 
@@ -3368,10 +3459,7 @@ async function detectNuclei({layer, slide: forSlide, checkpoint, model, views, r
   const runKey = `${forSlide.name}|${checkpoint}|${views}|probs|${hashText(JSON.stringify(rings))}`;
   const clearPreview = () => {
     layer.preview.nuclei = null;
-    for (const cls of layer.preview.classes.values()) {
-      cls.paths.clear();
-      cls.overview.context.clearRect(0, 0, cls.overview.canvas.width, cls.overview.canvas.height);
-    }
+    for (const cls of layer.preview.classes.values()) clearNuclei(cls);
   };
   const addBlock = json => {
     if (json.length > 2) layer.featureParts.push(json.slice(1, -1));
