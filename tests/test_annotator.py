@@ -165,3 +165,27 @@ def test_capture_saves_what_is_on_screen(annotator: Page, tiffs, nuclei, tmp_pat
     assert len(xs) > 100
     centre = (got.shape[1] / 2, got.shape[0] / 2)
     assert np.hypot(xs - centre[0], ys - centre[1]).max() < 140 * 2 ** 0.5 + 3
+
+
+def test_zoomed_out_nuclei_are_round_dots(annotator: Page, tiffs, tmp_path):
+    """Too far out for outlines, a tiny nucleus is a dot about DOT_RADIUS screen px in radius, round rather than a dot map square."""
+    path = tmp_path / "nucleus.geojson"
+    path.write_text(feature_collection([{"type": "Feature", "geometry": {"type": "Polygon", "coordinates": [ring(1998, 1498, 2002, 1502)]},
+                                         "properties": {"objectType": "detection", "classification": {"name": "Tumor", "color": [255, 0, 0]}}}]))
+    open_files(annotator, tiffs["ome_zlib"][0])
+    annotator.set_input_files("#files", str(path))
+    wait_for(annotator, "$('layers').querySelectorAll('label').length >= 1")
+    annotator.evaluate("viewer.viewport.zoomTo(viewer.viewport.imageToViewportZoom(0.3), null, true)")
+    annotator.evaluate("viewer.viewport.panTo(viewer.viewport.imageToViewportCoordinates(2000, 1500), true)")
+    annotator.evaluate("draw()")
+    wait_for(annotator, "!dotsPending")
+    alpha = np.array(annotator.evaluate("""(() => {
+        const {x, y} = toScreen(viewer, 2000, 1500), dpr = window.devicePixelRatio || 1;
+        const data = panes[0].ctx.getImageData(Math.round(x * dpr) - 10, Math.round(y * dpr) - 10, 21, 21).data;
+        return Array.from({length: 21 * 21}, (_, i) => data[4 * i + 3]);
+    })()""")).reshape(21, 21)
+    ys, xs = np.nonzero(alpha > 128)
+    assert 18 <= len(xs) <= 50, len(xs)  # π 3² ≈ 28
+    top, bottom, left, right = ys.min(), ys.max(), xs.min(), xs.max()
+    assert bottom - top >= 4 and right - left >= 4
+    assert not any(alpha[y, x] > 128 for y in (top, bottom) for x in (left, right))  # the corners of a square, not of a dot
