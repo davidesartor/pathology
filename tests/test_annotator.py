@@ -192,7 +192,7 @@ def test_zoomed_out_nuclei_are_round_dots(annotator: Page, tiffs, tmp_path):
 
 
 def test_zoomed_out_nuclei_cover_their_outlines(annotator: Page, tiffs, tmp_path):
-    """Zoomed out, a large nucleus is the smallest dot around its outline: a 200 × 100 px rectangle, a dot 2 × 112 px across."""
+    """Zoomed out, a large nucleus's dot spans its longer side: a 200 × 100 px rectangle, a dot 200 px across, not one of its area (160)."""
     path = tmp_path / "nucleus.geojson"
     path.write_text(feature_collection([{"type": "Feature", "geometry": {"type": "Polygon", "coordinates": [ring(1900, 1450, 2100, 1550)]},
                                          "properties": {"objectType": "detection", "classification": {"name": "Tumor", "color": [255, 0, 0]}}}]))
@@ -209,6 +209,6 @@ def test_zoomed_out_nuclei_cover_their_outlines(annotator: Page, tiffs, tmp_path
         return Array.from({length: 101 * 101}, (_, i) => data[4 * i + 3]);
     })()""")).reshape(101, 101)
     ys, xs = np.nonzero(alpha > 128)
-    diameter = 2 * 5 ** 0.5 * 50 * 0.3  # 67 screen px
+    diameter = 200 * 0.3  # 60 screen px
     assert abs((xs.max() - xs.min() + 1) - diameter) <= 3 and abs((ys.max() - ys.min() + 1) - diameter) <= 3, (xs.min(), xs.max(), ys.min(), ys.max())
     assert abs(xs.mean() - 50) <= 1 and abs(ys.mean() - 50) <= 1  # centred on the rectangle
