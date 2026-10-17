@@ -189,3 +189,26 @@ def test_zoomed_out_nuclei_are_round_dots(annotator: Page, tiffs, tmp_path):
     top, bottom, left, right = ys.min(), ys.max(), xs.min(), xs.max()
     assert bottom - top >= 4 and right - left >= 4
     assert not any(alpha[y, x] > 128 for y in (top, bottom) for x in (left, right))  # the corners of a square, not of a dot
+
+
+def test_zoomed_out_nuclei_cover_their_outlines(annotator: Page, tiffs, tmp_path):
+    """Zoomed out, a large nucleus is the smallest dot around its outline: a 200 × 100 px rectangle, a dot 2 × 112 px across."""
+    path = tmp_path / "nucleus.geojson"
+    path.write_text(feature_collection([{"type": "Feature", "geometry": {"type": "Polygon", "coordinates": [ring(1900, 1450, 2100, 1550)]},
+                                         "properties": {"objectType": "detection", "classification": {"name": "Tumor", "color": [255, 0, 0]}}}]))
+    open_files(annotator, tiffs["ome_zlib"][0])
+    annotator.set_input_files("#files", str(path))
+    wait_for(annotator, "$('layers').querySelectorAll('label').length >= 1")
+    annotator.evaluate("viewer.viewport.zoomTo(viewer.viewport.imageToViewportZoom(0.3), null, true)")
+    annotator.evaluate("viewer.viewport.panTo(viewer.viewport.imageToViewportCoordinates(2000, 1500), true)")
+    annotator.evaluate("draw()")
+    wait_for(annotator, "!dotsPending")
+    alpha = np.array(annotator.evaluate("""(() => {
+        const {x, y} = toScreen(viewer, 2000, 1500), dpr = window.devicePixelRatio || 1;
+        const data = panes[0].ctx.getImageData(Math.round(x * dpr) - 50, Math.round(y * dpr) - 50, 101, 101).data;
+        return Array.from({length: 101 * 101}, (_, i) => data[4 * i + 3]);
+    })()""")).reshape(101, 101)
+    ys, xs = np.nonzero(alpha > 128)
+    diameter = 2 * 5 ** 0.5 * 50 * 0.3  # 67 screen px
+    assert abs((xs.max() - xs.min() + 1) - diameter) <= 3 and abs((ys.max() - ys.min() + 1) - diameter) <= 3, (xs.min(), xs.max(), ys.min(), ys.max())
+    assert abs(xs.mean() - 50) <= 1 and abs(ys.mean() - 50) <= 1  # centred on the rectangle

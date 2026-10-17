@@ -1525,6 +1525,74 @@ function newOverview({width, height}, color) {
   return {canvas, context};
 }
 
+// the smallest circle around a ring's points, by Welzl's algorithm on squared distances, as it runs once per nucleus.
+// Rather than in random order, it takes first the points likeliest to be on the circle, so it rarely has to start over.
+// Plain assignments rather than destructuring here: in its loops, destructuring makes it three times slower
+function enclosingCircle(ring) {
+  const n = ring.length - 1;  // its last point repeats its first
+  const xs = new Float64Array(n), ys = new Float64Array(n);
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (let i = 0; i < n; i++) {
+    const px = ring[i][0], py = ring[i][1];
+    xs[i] = px;
+    ys[i] = py;
+    if (px < minX) minX = px;
+    if (px > maxX) maxX = px;
+    if (py < minY) minY = py;
+    if (py > maxY) maxY = py;
+  }
+  // the farthest point from the box's centre first, then the one farthest from it: most likely on the circle, so few restarts follow
+  const swap = (a, b) => {
+    const [x, y] = [xs[a], ys[a]];
+    xs[a] = xs[b];
+    ys[a] = ys[b];
+    xs[b] = x;
+    ys[b] = y;
+  };
+  const farthest = (fx, fy, from) => {
+    let best = from, most = -1;
+    for (let i = from; i < n; i++) {
+      const distance = (xs[i] - fx) ** 2 + (ys[i] - fy) ** 2;
+      if (distance > most) {
+        best = i;
+        most = distance;
+      }
+    }
+    return best;
+  };
+  swap(0, farthest((minX + maxX) / 2, (minY + maxY) / 2, 0));
+  swap(1, farthest(xs[0], ys[0], 1));
+  let x = xs[0], y = ys[0], r2 = 0;
+  const outside = i => (xs[i] - x) ** 2 + (ys[i] - y) ** 2 > r2 * (1 + 1e-9) + 1e-9;
+  const across = (a, b) => { x = (xs[a] + xs[b]) / 2; y = (ys[a] + ys[b]) / 2; r2 = ((xs[a] - xs[b]) ** 2 + (ys[a] - ys[b]) ** 2) / 4; };
+  for (let i = 1; i < n; i++) {
+    if (!outside(i)) continue;
+    x = xs[i];
+    y = ys[i];
+    r2 = 0;
+    for (let j = 0; j < i; j++) {
+      if (!outside(j)) continue;
+      across(i, j);
+      for (let k = 0; k < j; k++) {
+        if (!outside(k)) continue;
+        const bx = xs[j] - xs[i], by = ys[j] - ys[i], cx = xs[k] - xs[i], cy = ys[k] - ys[i], d = 2 * (bx * cy - by * cx);
+        const b2 = bx * bx + by * by, c2 = cx * cx + cy * cy;
+        if (Math.abs(d) < 1e-12) {
+          // in line: the circle across the two farthest apart
+          const jk = (xs[j] - xs[k]) ** 2 + (ys[j] - ys[k]) ** 2;
+          b2 >= c2 && b2 >= jk ? across(i, j) : c2 >= jk ? across(i, k) : across(j, k);
+          continue;
+        }
+        const ux = (cy * b2 - by * c2) / d, uy = (bx * c2 - cx * b2) / d;
+        x = xs[i] + ux;
+        y = ys[i] + uy;
+        r2 = ux * ux + uy * uy;
+      }
+    }
+  }
+  return {x, y, radius: Math.sqrt(r2)};
+}
+
 // a nucleus as a dot: its centre and radius in slide px, kept by the grid cell its centre is in
 function addDot(cls, x, y, radius) {
   const key = `${Math.floor(x / CELL)},${Math.floor(y / CELL)}`;
@@ -1565,7 +1633,8 @@ function addPolygon(cls, polygon) {
     const x = exterior.reduce((sum, point) => sum + point[0], 0) / exterior.length;
     const y = exterior.reduce((sum, point) => sum + point[1], 0) / exterior.length;
     cls.overview.context.fillRect(Math.floor(x / OVERVIEW), Math.floor(y / OVERVIEW), 1, 1);
-    addDot(cls, x, y, Math.sqrt(ringArea(exterior) / Math.PI));
+    const circle = enclosingCircle(exterior);
+    addDot(cls, circle.x, circle.y, circle.radius);
     (cls.centres ??= []).push(x, y);
   }
 }
