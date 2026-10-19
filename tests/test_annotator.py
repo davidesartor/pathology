@@ -168,8 +168,8 @@ def test_capture_saves_what_is_on_screen(annotator: Page, tiffs, nuclei, tmp_pat
     assert np.hypot(xs - centre[0], ys - centre[1]).max() < 140 * 2 ** 0.5 + 3
 
 
-def test_zoomed_out_nuclei_are_round_dots(annotator: Page, tiffs, tmp_path):
-    """Too far out for outlines, a tiny nucleus is a dot about DOT_RADIUS screen px in radius, round rather than a dot map square."""
+def test_zoomed_out_tiny_nuclei_still_show(annotator: Page, tiffs, tmp_path):
+    """Too far out for outlines, a nucleus under a screen px across is still stroked as a small round spot."""
     path = tmp_path / "nucleus.geojson"
     path.write_text(feature_collection([{"type": "Feature", "geometry": {"type": "Polygon", "coordinates": [ring(1998, 1498, 2002, 1502)]},
                                          "properties": {"objectType": "detection", "classification": {"name": "Tumor", "color": [255, 0, 0]}}}]))
@@ -179,21 +179,18 @@ def test_zoomed_out_nuclei_are_round_dots(annotator: Page, tiffs, tmp_path):
     annotator.evaluate("viewer.viewport.zoomTo(viewer.viewport.imageToViewportZoom(0.3), null, true)")
     annotator.evaluate("viewer.viewport.panTo(viewer.viewport.imageToViewportCoordinates(2000, 1500), true)")
     annotator.evaluate("draw()")
-    wait_for(annotator, "!dotsPending")
     alpha = np.array(annotator.evaluate("""(() => {
         const {x, y} = toScreen(viewer, 2000, 1500), dpr = window.devicePixelRatio || 1;
         const data = panes[0].ctx.getImageData(Math.round(x * dpr) - 10, Math.round(y * dpr) - 10, 21, 21).data;
         return Array.from({length: 21 * 21}, (_, i) => data[4 * i + 3]);
     })()""")).reshape(21, 21)
-    ys, xs = np.nonzero(alpha > 128)
-    assert 18 <= len(xs) <= 50, len(xs)  # π 3² ≈ 28
-    top, bottom, left, right = ys.min(), ys.max(), xs.min(), xs.max()
-    assert bottom - top >= 4 and right - left >= 4
-    assert not any(alpha[y, x] > 128 for y in (top, bottom) for x in (left, right))  # the corners of a square, not of a dot
+    ys, xs = np.nonzero(alpha > 64)
+    assert 1 <= len(xs) <= 16, len(xs)  # a disc of radius 0.6 + 0.75 screen px
+    assert abs(xs.mean() - 10) <= 1 and abs(ys.mean() - 10) <= 1
 
 
-def test_zoomed_out_nuclei_cover_their_outlines(annotator: Page, tiffs, tmp_path):
-    """Zoomed out, a large nucleus's dot spans its longer side: a 200 × 100 px rectangle, a dot 200 px across, not one of its area (160)."""
+def test_zoomed_out_nuclei_are_circles(annotator: Page, tiffs, tmp_path):
+    """Zoomed out, a nucleus is stroked as the circle across its longer side: a 200 × 100 px rectangle, a ring 200 px across, hollow."""
     path = tmp_path / "nucleus.geojson"
     path.write_text(feature_collection([{"type": "Feature", "geometry": {"type": "Polygon", "coordinates": [ring(1900, 1450, 2100, 1550)]},
                                          "properties": {"objectType": "detection", "classification": {"name": "Tumor", "color": [255, 0, 0]}}}]))
@@ -203,7 +200,6 @@ def test_zoomed_out_nuclei_cover_their_outlines(annotator: Page, tiffs, tmp_path
     annotator.evaluate("viewer.viewport.zoomTo(viewer.viewport.imageToViewportZoom(0.3), null, true)")
     annotator.evaluate("viewer.viewport.panTo(viewer.viewport.imageToViewportCoordinates(2000, 1500), true)")
     annotator.evaluate("draw()")
-    wait_for(annotator, "!dotsPending")
     alpha = np.array(annotator.evaluate("""(() => {
         const {x, y} = toScreen(viewer, 2000, 1500), dpr = window.devicePixelRatio || 1;
         const data = panes[0].ctx.getImageData(Math.round(x * dpr) - 50, Math.round(y * dpr) - 50, 101, 101).data;
@@ -213,11 +209,12 @@ def test_zoomed_out_nuclei_cover_their_outlines(annotator: Page, tiffs, tmp_path
     diameter = 200 * 0.3  # 60 screen px
     assert abs((xs.max() - xs.min() + 1) - diameter) <= 3 and abs((ys.max() - ys.min() + 1) - diameter) <= 3, (xs.min(), xs.max(), ys.min(), ys.max())
     assert abs(xs.mean() - 50) <= 1 and abs(ys.mean() - 50) <= 1  # centred on the rectangle
+    assert (alpha[40:61, 40:61] == 0).all()  # an outline, not a filled dot
 
 
 @pytest.mark.parametrize("scale", [2, 0.3])
 def test_opacity_shows_class_confidence(annotator: Page, tiffs, tmp_path, scale):
-    """At temperature 0 nuclei are opaque, as without logits; above it, a nucleus near chance fades to LEAST_OPACITY, outline or dot."""
+    """At temperature 0 nuclei are opaque, as without logits; above it, a nucleus near chance fades to LEAST_OPACITY, outline or circle."""
     nuclei = [((1900, 1500), [10, 0]), ((2100, 1500), [0.1, 0])]
     path = tmp_path / "nuclei.geojson"
     path.write_text(feature_collection([{"type": "Feature", "geometry": {"type": "Polygon", "coordinates": [ring(x - 10, y - 10, x + 10, y + 10)]},
@@ -232,7 +229,7 @@ def test_opacity_shows_class_confidence(annotator: Page, tiffs, tmp_path, scale)
 
     def opacity(temperature: float) -> list[int]:
         annotator.evaluate(f"$('temperature').value = {temperature}; $('temperature').dispatchEvent(new Event('input'))")
-        wait_for(annotator, "!dotsPending")
+        annotator.evaluate("new Promise(requestAnimationFrame)")
         return annotator.evaluate("""[1900, 2100].map(x => {
             const {x: sx, y: sy} = toScreen(viewer, x, 1500), dpr = window.devicePixelRatio || 1;
             const data = panes[0].ctx.getImageData(Math.round(sx * dpr) - 30, Math.round(sy * dpr) - 30, 61, 61).data;
