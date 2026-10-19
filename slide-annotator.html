@@ -265,13 +265,13 @@
         <h3>Draw ROI</h3>
         <div class="seg" id="roi-mode"><button data-value="outline" title="draw each ROI's outline">Outline</button><button data-value="paint" title="paint ROIs with a brush">Paint</button><button data-value="erase" title="erase parts of the ROIs with a brush">Erase</button></div>
         <label id="brush" title="the brush's width on screen">brush <input id="brush-size" type="range" min="10" max="200" step="1"></label>
-        <p class="note" id="outline-help">Click to place corners, or hold and drag to trace. Close with Enter, a double-click or a click on the first corner. A shape drawn inside another is an exclusion zone. Backspace undoes, Esc cancels. Two fingers pan, pinch zooms.</p>
-        <p class="note" id="paint-help">Drag to paint; a stroke joins the ROIs it touches, and a gap left inside one is an exclusion zone. Zoom in for finer edges. Backspace undoes, Esc stops. Two fingers pan, pinch zooms.</p>
+        <p class="note" id="outline-help">Click to place corners, or hold and drag to trace. Close with Enter, a double-click or a click on the first corner. A shape drawn inside another is an exclusion zone. Backspace undoes, Esc cancels. Two fingers pan, pinch zooms; once a pencil is used, only it draws and one finger pans.</p>
+        <p class="note" id="paint-help">Drag to paint; a stroke joins the ROIs it touches, and a gap left inside one is an exclusion zone. Zoom in for finer edges. Backspace undoes, Esc stops. Two fingers pan, pinch zooms; once a pencil is used, only it draws and one finger pans.</p>
         <div class="buttons"><button id="roi-undo" title="undo the last change; Backspace also does">Undo</button></div>
       </div>
       <div id="measure-help" hidden>
         <h3>Measure</h3>
-        <p class="note">Drag a line, or click its two ends. Shift keeps it level or upright. Backspace undoes, Esc stops. Two fingers pan, pinch zooms.</p>
+        <p class="note">Drag a line, or click its two ends. Shift keeps it level or upright. Backspace undoes, Esc stops. Two fingers pan, pinch zooms; once a pencil is used, only it draws and one finger pans.</p>
         <div class="buttons"><button id="measure-undo" title="undo the last change; Backspace also does">Undo</button></div>
       </div>
       <div id="capture-settings" hidden>
@@ -2569,7 +2569,7 @@ const TRACE_STEP = 4;  // screen px between traced points
 let drawing = false;
 let draft = [];  // corners of the ROI being drawn, in slide px
 let draftStrokes = [];  // where in draft each click or drag began, for undo
-let pressed = null;  // {position, dragged} while the pointer is down
+let pressed = null;  // {position, dragged, started (a line's first end)} while the pointer is down
 let pointer = null;  // pointer in slide px, for the line to the next corner
 
 const screenScale = () => { const origin = toScreen(viewer, 0, 0), alongX = toScreen(viewer, 1, 0); return Math.hypot(alongX.x - origin.x, alongX.y - origin.y); };
@@ -2865,7 +2865,7 @@ function setTool(tool) {
   stroke = null;
   [drawing, measuring, capturing] = ["roi", "measure", "capture"].map(name => name === tool);
   measureStart = null;
-  for (const settings of [viewer.gestureSettingsMouse, viewer.gestureSettingsTouch, viewer.gestureSettingsPen]) settings.dragToPan = settings.clickToZoom = !(drawing || measuring);
+  toolGestures();
   viewer.canvas.style.cursor = drawing || measuring ? "crosshair" : "";
   for (const [id, on] of [["pan", !tool], ["draw-roi", drawing], ["measure", measuring], ["capture", capturing]]) $(id).classList.toggle("active", on);
   $("toolopts").hidden = !tool;
@@ -2883,21 +2883,62 @@ function setTool(tool) {
   draw();
 }
 $("pan").addEventListener("click", () => setTool(null));
+function toolGestures() {
+  const on = drawing || measuring;
+  for (const settings of [viewer.gestureSettingsMouse, viewer.gestureSettingsTouch, viewer.gestureSettingsPen]) settings.dragToPan = settings.clickToZoom = !on;
+  // a double tap would zoom as it closes an outline, and a tap then a drag would zoom instead of tracing
+  viewer.gestureSettingsTouch.dblClickToZoom = viewer.gestureSettingsTouch.dblClickDragToZoom = !on;
+  if (penSeen) viewer.gestureSettingsTouch.dragToPan = true;
+}
+
+// a second finger turns a press into a pinch, which pans and zooms: the stroke, traced corners or line end the press began are dropped.
+// Once a pen has been used, only the pen draws and fingers pan and pinch, so a palm resting on the screen leaves no marks, and moves nothing while the pen is down
+const fingers = new Set();
+let penSeen = false, penDown = false;
+const fingerOnly = event => penSeen && event.pointerType === "touch";
+viewer.container.addEventListener("pointerdown", event => {
+  if (event.pointerType === "pen") {
+    penDown = true;
+    if (!penSeen) {
+      penSeen = true;
+      toolGestures();
+    }
+  }
+  if (event.pointerType !== "touch") return;
+  fingers.add(event.pointerId);
+  if (fingers.size === 2 && !penSeen) dropPress();
+}, true);
+for (const type of ["pointerup", "pointercancel"]) {
+  window.addEventListener(type, event => {
+    if (event.pointerType === "pen") penDown = false;
+    fingers.delete(event.pointerId);
+  }, true);
+}
+for (const type of ["canvas-drag", "canvas-drag-end"]) viewer.addHandler(type, event => { if (penDown && event.pointerType === "touch") event.preventDefaultAction = true; });
+viewer.addHandler("canvas-pinch", event => { if (penDown) event.preventDefaultPanAction = event.preventDefaultZoomAction = true; });
+function dropPress() {
+  if (stroke) stroke = null;
+  else if (drawing && pressed?.dragged) draft.length = draftStrokes.pop();
+  else if (measuring && pressed?.started) measureStart = null;
+  pressed = null;
+  draw();
+}
 $("draw-roi").addEventListener("click", () => setTool(drawing ? null : "roi"));
 $("measure").addEventListener("click", () => setTool(measuring ? null : "measure"));
 $("capture").addEventListener("click", () => setTool(capturing ? null : "capture"));
 
-// with the brush, a press starts a stroke, laid on the ROIs when released; a second finger turns it into a pinch instead
+// with the brush, a press starts a stroke, laid on the ROIs when released
 const painting = () => drawing && roiMode !== "outline";
 viewer.addHandler("canvas-press", event => {
+  if (fingerOnly(event)) return;
   if (painting()) {
     pointer = slidePoint(event.position);
     stroke = {points: [pointer], radius: brushSize / 2 / screenScale(), erase: roiMode === "erase"};
     draw();
   } else if (drawing) pressed = {position: event.position, dragged: false};
 });
-viewer.addHandler("canvas-pinch", () => { if (stroke) { stroke = null; draw(); } });
 viewer.addHandler("canvas-drag", event => {
+  if (fingerOnly(event)) return;
   if (stroke) {
     pointer = slidePoint(event.position);
     if (screenDistance(pointer, stroke.points.at(-1)) >= 2) stroke.points.push(pointer);
@@ -2915,6 +2956,7 @@ viewer.addHandler("canvas-drag", event => {
   draw();
 });
 viewer.addHandler("canvas-release", event => {
+  if (fingerOnly(event)) return;
   if (stroke) {
     applyStroke(stroke);
     stroke = null;
@@ -3022,18 +3064,18 @@ function undoLine() {
   draw();
 }
 viewer.addHandler("canvas-press", event => {
-  if (!measuring) return;
-  pressed = {position: event.position, dragged: false};
+  if (!measuring || fingerOnly(event)) return;
+  pressed = {position: event.position, dragged: false, started: !measureStart};
   measureStart ??= slidePoint(event.position);
 });
 viewer.addHandler("canvas-drag", event => {
-  if (!measuring || !pressed) return;
+  if (!measuring || !pressed || fingerOnly(event)) return;
   if (event.position.distanceTo(pressed.position) >= TRACE_STEP) pressed.dragged = true;
   pointer = measureEnd(event.position, event.originalEvent?.shiftKey);
   draw();
 });
 viewer.addHandler("canvas-release", event => {
-  if (!measuring || !pressed) return;
+  if (!measuring || !pressed || fingerOnly(event)) return;
   const {dragged, position} = pressed;
   pressed = null;
   // a click that only placed the first end waits for the second

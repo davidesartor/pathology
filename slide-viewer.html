@@ -245,13 +245,13 @@
         <h3>Highlight</h3>
         <div class="seg" data-part="highlight-mode"><button data-value="outline" title="draw each highlight's outline">Outline</button><button data-value="paint" title="paint highlights with a brush">Paint</button><button data-value="erase" title="erase parts of the highlights with a brush">Erase</button></div>
         <label class="brush" data-part="brush" title="the brush's width on screen">brush <input data-part="brush-size" type="range" min="10" max="200" step="1"></label>
-        <p class="note" data-part="outline-help">Drag to outline an area, or click to place corners. Close with Enter, a double-click or a click on the first corner. Backspace undoes, Esc cancels. Two fingers pan, pinch zooms.</p>
-        <p class="note" data-part="paint-help">Drag to paint; a stroke adds to the highlight it touches, else starts a new one, and a gap left inside one is a hole. Zoom in for finer edges. Backspace undoes, Esc stops. Two fingers pan, pinch zooms.</p>
+        <p class="note" data-part="outline-help">Drag to outline an area, or click to place corners. Close with Enter, a double-click or a click on the first corner. Backspace undoes, Esc cancels. Two fingers pan, pinch zooms; once a pencil is used, only it draws and one finger pans.</p>
+        <p class="note" data-part="paint-help">Drag to paint; a stroke adds to the highlight it touches, else starts a new one, and a gap left inside one is a hole. Zoom in for finer edges. Backspace undoes, Esc stops. Two fingers pan, pinch zooms; once a pencil is used, only it draws and one finger pans.</p>
         <div class="buttons"><button data-part="highlight-undo" title="undo the last change; Backspace also does">Undo</button></div>
       </div>
       <div data-part="measure-help" hidden>
         <h3>Measure</h3>
-        <p class="note">Drag a line, or click its two ends. Shift keeps it level or upright. Backspace undoes, Esc stops. Two fingers pan, pinch zooms.</p>
+        <p class="note">Drag a line, or click its two ends. Shift keeps it level or upright. Backspace undoes, Esc stops. Two fingers pan, pinch zooms; once a pencil is used, only it draws and one finger pans.</p>
         <div class="buttons"><button data-part="measure-undo" title="undo the last change; Backspace also does">Undo</button></div>
       </div>
       <div data-part="capture-settings" hidden>
@@ -1176,6 +1176,7 @@ const panes = [];
 let split = false;
 let linked = false;  // side by side, the pane under the pointer leads and the other follows it frame by frame
 let activePane = null;  // the pane last pointed at: it leads linked views, and opened or dropped slides go to it
+let penSeen = false;  // once a pen has touched a slide, only the pen draws; fingers pan and pinch
 const follow = (source, target) => {
   target.viewport.setFlip(source.viewport.getFlip());
   if (target.viewport.getRotation(true) !== source.viewport.getRotation(true)) target.viewport.setRotation(source.viewport.getRotation(true), true);
@@ -1426,7 +1427,7 @@ function createPane(index) {
   let capturing = false;
   let draft = [];  // corners of the area being drawn, in slide px
   let draftStrokes = [];  // where in draft each click or drag began, for undo
-  let pressed = null;  // {position, dragged} while the pointer is down
+  let pressed = null;  // {position, dragged, started (a line's first end)} while the pointer is down
   let pointer = null;  // pointer in slide px, for the line to the next corner
   let stroke = null;  // {points, radius, erase} in slide px, while painting
   let editingArea = null;  // the highlight or measurement whose width and merging are open in the list
@@ -1501,7 +1502,44 @@ function createPane(index) {
 
   function setToolGestures(on) {
     for (const settings of [viewer.gestureSettingsMouse, viewer.gestureSettingsTouch, viewer.gestureSettingsPen]) settings.dragToPan = settings.clickToZoom = !on;
+    // a double tap would zoom as it closes an outline, and a tap then a drag would zoom instead of tracing
+    viewer.gestureSettingsTouch.dblClickToZoom = viewer.gestureSettingsTouch.dblClickDragToZoom = !on;
+    if (penSeen) viewer.gestureSettingsTouch.dragToPan = true;
     viewer.canvas.style.cursor = on ? "crosshair" : "";
+  }
+  pane.toolGestures = () => setToolGestures(drawing || measuring);
+
+  // a second finger turns a press into a pinch, which pans and zooms: the stroke, traced corners or line end the press began are dropped.
+  // Once a pen has been used, fingers never draw, so a palm resting on the screen leaves no marks, and moves nothing while the pen is down
+  const fingers = new Set();
+  let penDown = false;
+  const fingerOnly = event => penSeen && event.pointerType === "touch";
+  viewer.container.addEventListener("pointerdown", event => {
+    if (event.pointerType === "pen") {
+      penDown = true;
+      if (!penSeen) {
+        penSeen = true;
+        panes.forEach(other => other.toolGestures());
+      }
+    }
+    if (event.pointerType !== "touch") return;
+    fingers.add(event.pointerId);
+    if (fingers.size === 2 && !penSeen) dropPress();
+  }, true);
+  for (const type of ["pointerup", "pointercancel"]) {
+    window.addEventListener(type, event => {
+      if (event.pointerType === "pen") penDown = false;
+      fingers.delete(event.pointerId);
+    }, true);
+  }
+  for (const type of ["canvas-drag", "canvas-drag-end"]) viewer.addHandler(type, event => { if (penDown && event.pointerType === "touch") event.preventDefaultAction = true; });
+  viewer.addHandler("canvas-pinch", event => { if (penDown) event.preventDefaultPanAction = event.preventDefaultZoomAction = true; });
+  function dropPress() {
+    if (stroke) stroke = null;
+    else if (drawing && pressed?.dragged) draft.length = draftStrokes.pop();
+    else if (measuring && pressed?.started) measureStart = null;
+    pressed = null;
+    draw();
   }
   // one tool at a time
   function setTool(tool) {
@@ -1553,18 +1591,18 @@ function createPane(index) {
     draw();
   }
   viewer.addHandler("canvas-press", event => {
-    if (!measuring) return;
-    pressed = {position: event.position, dragged: false};
+    if (!measuring || fingerOnly(event)) return;
+    pressed = {position: event.position, dragged: false, started: !measureStart};
     measureStart ??= slidePoint(event.position);
   });
   viewer.addHandler("canvas-drag", event => {
-    if (!measuring || !pressed) return;
+    if (!measuring || !pressed || fingerOnly(event)) return;
     if (event.position.distanceTo(pressed.position) >= TRACE_STEP) pressed.dragged = true;
     pointer = measureEnd(event.position, event.originalEvent?.shiftKey);
     draw();
   });
   viewer.addHandler("canvas-release", event => {
-    if (!measuring || !pressed) return;
+    if (!measuring || !pressed || fingerOnly(event)) return;
     const {dragged, position} = pressed;
     pressed = null;
     // a click that only placed the first end waits for the second
@@ -1721,17 +1759,18 @@ function createPane(index) {
   part("brush-size").addEventListener("input", () => changeBrush({size: Number(part("brush-size").value)}));
   showBrush();
 
-  // with the brush, a press starts a stroke, laid on the highlights when released; a second finger turns it into a pinch instead
+  // with the brush, a press starts a stroke, laid on the highlights when released
   function painting() { return drawing && brush.mode !== "outline"; }
   viewer.addHandler("canvas-press", event => {
+    if (fingerOnly(event)) return;
     if (painting()) {
       pointer = slidePoint(event.position);
       stroke = {points: [pointer], radius: brush.size / 2 / screenScale(), erase: brush.mode === "erase"};
       draw();
     } else if (drawing) pressed = {position: event.position, dragged: false};
   });
-  viewer.addHandler("canvas-pinch", () => { if (stroke) { stroke = null; draw(); } });
   viewer.addHandler("canvas-drag", event => {
+    if (fingerOnly(event)) return;
     if (stroke) {
       pointer = slidePoint(event.position);
       if (screenDistance(pointer, stroke.points.at(-1)) >= 2) stroke.points.push(pointer);
@@ -1749,6 +1788,7 @@ function createPane(index) {
     draw();
   });
   viewer.addHandler("canvas-release", event => {
+    if (fingerOnly(event)) return;
     if (stroke) {
       applyStroke(stroke);
       stroke = null;
