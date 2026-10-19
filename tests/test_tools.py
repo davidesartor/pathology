@@ -3,7 +3,7 @@ import numpy as np
 from PIL import Image
 from playwright.sync_api import Page
 
-from conftest import drag, open_files, open_folder, set_view, settle, wait_for
+from conftest import drag, open_files, open_settings, open_folder, set_view, settle, wait_for
 from slides import write_mrxs
 from test_slides import screenshot
 
@@ -66,8 +66,8 @@ def test_capture_size_in_microns(app: Page, tiffs):
     before = app.input_value("#capture-width")
     rect = app.evaluate("(() => { const s = viewer.viewport.getContainerSize(); return [s.x, s.y]; })()")
     scale = app.evaluate("viewer.viewport.viewportToImageZoom(viewer.viewport.getZoom(true))")
-    corner = (rect[0] / 2 - 1000 * scale, rect[1] / 2 - 200 * scale)  # top left, clear of the panel
-    drag(app, corner, (corner[0] + 100, corner[1]))
+    corner = (rect[0] / 2 + 1000 * scale, rect[1] / 2 - 200 * scale)  # top right, clear of the tool rail
+    drag(app, corner, (corner[0] - 100, corner[1]))
     assert app.input_value("#capture-width") != before
 
 
@@ -94,6 +94,8 @@ def test_measure_line(app: Page, tiffs):
     assert first["kind"] == "line" and abs(np.hypot(*np.diff(first["ring"], axis=0)[0]) - 200) <= 1
     assert second["ring"][0][1] == second["ring"][1][1]  # level
     assert app.locator("#areas .area .count").first.text_content() == "50 µm"
+    app.click("#measure-undo")  # touch screens have no Backspace
+    assert len(app.evaluate("slide.areas")) == 1
 
 
 def test_microscope_field_sets_magnification(app: Page, tiffs):
@@ -103,6 +105,7 @@ def test_microscope_field_sets_magnification(app: Page, tiffs):
     settle(app)
     plain = screenshot(app, view_only=True).astype(int)
     app.click("#field")
+    open_settings(app)
     app.click("#field-number [data-value='22']")
     app.click("#zoom [data-zoom='40']")
     wait_for(app, "$('status').textContent.includes('40.0×, field ⌀ 550 µm')")
@@ -112,4 +115,4 @@ def test_microscope_field_sets_magnification(app: Page, tiffs):
     dimmed = screenshot(app, view_only=True).astype(int)
     assert dimmed[390:410, 490:510].mean() > 100 and dimmed[390:410, 20:60].mean() < 0.7 * plain[390:410, 20:60].mean()
     app.reload()
-    assert app.evaluate("eyepiece.field") and app.locator("#field").get_attribute("class") == "active"
+    assert app.evaluate("eyepiece.field") and "active" in app.locator("#field").get_attribute("class").split()

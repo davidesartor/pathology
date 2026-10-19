@@ -6,7 +6,7 @@ import pytest
 from PIL import Image
 from playwright.sync_api import Page
 
-from conftest import drag, open_files, pointer_at, set_view, wait_for
+from conftest import drag, open_files, open_settings, pointer_at, set_view, wait_for
 from test_slides import screenshot
 
 # ROIs in slide px: a square with a hole, and a second square; edges on multiples of 100
@@ -118,6 +118,7 @@ def test_calibration_sets_magnification(annotator: Page, tiffs):
     """Calibrated to 0.25 mm per screen px and shared with the viewer: 1 screen px per 0.25 µm slide px is 100× through a 10× eyepiece."""
     open_files(annotator, tiffs["ome_zlib"][0])
     annotator.evaluate("viewer.viewport.zoomTo(viewer.viewport.imageToViewportZoom(1), null, true)")
+    open_settings(annotator)
     annotator.click("#eyepiece-power [data-value='10']")
     annotator.click("#calibrate")
     annotator.locator("#calibration-scale").fill("4")
@@ -241,3 +242,44 @@ def test_opacity_shows_class_confidence(annotator: Page, tiffs, tmp_path, scale)
     assert all(alpha > 200 for alpha in opacity(0))
     confident, uncertain = opacity(1)
     assert confident > 200 and 20 < uncertain < 60, (confident, uncertain)  # LEAST_OPACITY 0.15 ≈ 38
+
+
+def test_paint_and_erase_rois(annotator: Page, tiffs):
+    """Brush strokes become ROI rings of the stroke's area: erasing across one splits it, a painted loop leaves an exclusion zone, and undo steps back."""
+    open_files(annotator, tiffs["ome_zlib"][0])
+    annotator.evaluate("viewer.viewport.zoomTo(viewer.viewport.imageToViewportZoom(0.25), viewer.viewport.imageToViewportCoordinates(3300, 2000), true)")
+    annotator.click("#draw-roi")
+    annotator.click("#roi-mode [data-value=paint]")
+    annotator.evaluate("changeROIMode({brushSize: 20})")  # 40 slide px across a radius at 0.25 screen px per slide px
+
+    def screen(x: float, y: float) -> tuple[float, float]:
+        return tuple(annotator.evaluate("([x, y]) => { const point = viewer.viewport.imageToViewerElementCoordinates(new OpenSeadragon.Point(x, y)), rect = viewer.container.getBoundingClientRect(); return [rect.left + point.x, rect.top + point.y]; }", [x, y]))
+
+    def stroke(*points: tuple[float, float]):
+        annotator.mouse.move(*screen(*points[0]))
+        annotator.mouse.down()
+        for point in points[1:]:
+            annotator.mouse.move(*screen(*point), steps=10)
+        annotator.mouse.up()
+
+    def areas() -> list[float]:
+        return sorted(annotator.evaluate("drawnLayer().drawn.map(ringArea)"))
+
+    stroke((2000, 2000), (3000, 2000))
+    capsule = 1000 * 80 + np.pi * 40 ** 2
+    assert len(areas()) == 1 and areas()[0] == pytest.approx(capsule, rel=0.03)
+
+    annotator.click("#roi-mode [data-value=erase]")
+    stroke((2500, 1800), (2500, 2200))
+    assert len(areas()) == 2 and sum(areas()) == pytest.approx(capsule - 80 * 80, rel=0.03)  # less the brush's width across it
+
+    annotator.click("#roi-mode [data-value=paint]")
+    stroke((4300, 1800), (4700, 1800), (4700, 2200), (4300, 2200), (4300, 1800))
+    assert annotator.evaluate("ringDepths(drawnLayer().drawn).sort().join()") == "0,0,0,1"
+    assert areas()[-1] == pytest.approx(480 ** 2, rel=0.03)  # the loop's outline, its corners rounded by the brush
+    assert areas()[-2] == pytest.approx(320 ** 2, rel=0.03)  # the hole inside it
+
+    annotator.keyboard.press("Backspace")
+    assert len(areas()) == 2
+    annotator.click("#roi-undo")  # touch screens have no Backspace
+    assert len(areas()) == 1

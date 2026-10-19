@@ -69,8 +69,8 @@ def test_pointer_reads_the_pixel_under_it(app: Page, tiffs, rotation, flip):
     screen = screenshot(app)
     checked = 0
     for x, y in np.random.default_rng(abs(rotation) + flip).integers([0, 0], [SIZE["width"], SIZE["height"]], (80, 2)):
-        if app.evaluate("([x, y]) => !document.elementFromPoint(x, y).closest('.openseadragon-canvas')", [int(x), int(y)]):
-            continue  # under the panels or the navigator
+        if app.evaluate("([x, y]) => [-40, 0, 40].some(dx => [-40, 0, 40].some(dy => !document.elementFromPoint(x + dx, y + dy)?.closest('.openseadragon-canvas')))", [int(x), int(y)]):
+            continue  # under or near the panels or the navigator, whose shadows darken the slide
         slide_x, slide_y = pointer_at(app, int(x), int(y))
         # the readout rounds and the screen blends neighbours, so skip points near block edges or where blue wraps
         if np.ptp(image[slide_y - 2:slide_y + 3, slide_x - 2:slide_x + 3].reshape(-1, 3).astype(int), axis=0).max() > 12:
@@ -86,7 +86,7 @@ def screenshot(page: Page, view_only: bool = False) -> np.ndarray:
     """The page as RGB; view_only hides the panels and navigator drawn over the slide."""
     from io import BytesIO
     from PIL import Image
-    hide = "for (const element of document.querySelectorAll('#panel, #info, #tabs, .navigator')) element.style.visibility = '%s'"
+    hide = "for (const element of document.querySelectorAll('.hud, #side, .navigator')) element.style.visibility = '%s'"
     if view_only:
         page.evaluate(hide % "hidden")
     png = page.screenshot()

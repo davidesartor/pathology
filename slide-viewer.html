@@ -7,81 +7,165 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'wasm-unsafe-eval' https://cdn.jsdelivr.net/npm/openseadragon@5.0.1/ https://cdn.jsdelivr.net/npm/geotiff@3.0.5/ https://cdn.jsdelivr.net/npm/@cornerstonejs/codec-openjpeg@1.3.6/; worker-src blob:; connect-src blob: https://cdn.jsdelivr.net/npm/@cornerstonejs/codec-openjpeg@1.3.6/; img-src blob: data: https://cdn.jsdelivr.net/npm/openseadragon@5.0.1/; style-src 'unsafe-inline'; form-action 'none'; base-uri 'none'">
 <title>Slide viewer</title>
 <style>
-  html, body { margin: 0; height: 100%; background: #1a1a1a; color: #eee; font: 13px system-ui, sans-serif; }
+  :root {
+    --stage: #0e1012; --glass: rgba(23, 26, 30, 0.93); --panel: #16191d; --raised: #252a30; --line: #343c44; --line-strong: #4b555e;
+    --fg: #e6eaed; --muted: #9aa5ae; --faint: #6c767e; --accent: #35c2bd; --accent-soft: rgba(53, 194, 189, 0.16); --accent-fg: #c4f4f1;
+    --mono: ui-monospace, Menlo, Consolas, monospace; --side: 320px;
+    color-scheme: dark;
+  }
+  body.side-collapsed { --side: 56px; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: var(--stage); color: var(--fg); font: 13px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  [hidden] { display: none !important; }
+  button, select, input { font: inherit; color: inherit; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  button { background: var(--raised); border: 1px solid var(--line); border-radius: 7px; padding: 4px 10px; min-height: 30px; cursor: pointer; white-space: nowrap; }
+  @media (hover: hover) { button:hover { border-color: var(--line-strong); } }
+  button:disabled { opacity: 0.5; cursor: default; }
+  button.active { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-fg); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #062220; font-weight: 600; }
+  input[type=range] { min-width: 0; accent-color: var(--accent); }
+  .ico { display: block; flex: none; width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+  .icon { display: grid; place-items: center; width: 32px; height: 32px; min-height: 0; padding: 0; background: none; border-color: transparent; color: var(--muted); }
+  @media (hover: hover) { .icon:hover { color: var(--fg); background: var(--raised); border-color: transparent; } }
+  .tip { position: fixed; z-index: 50; max-width: 260px; padding: 6px 9px; border-radius: 7px; background: var(--panel); border: 1px solid var(--line-strong); box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4); font-size: 12px; line-height: 1.35; pointer-events: none; }
+  .tip b { display: block; font-weight: 600; }
+  .tip span { display: block; margin-top: 2px; color: var(--muted); }
+  .box { background: var(--glass); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 8px 28px rgba(0, 0, 0, 0.38); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
+  .count { margin-left: auto; padding-left: 12px; color: var(--muted); font: 12px var(--mono); font-variant-numeric: tabular-nums; }
+  .note { margin: 6px 0 0; color: var(--muted); font-size: 12px; }
+  .seg { display: flex; }
+  .seg button { flex: 1; min-width: 0; padding: 4px 6px; border-radius: 0; margin-left: -1px; }
+  .seg button:first-child { border-radius: 7px 0 0 7px; margin-left: 0; }
+  .seg button:last-child { border-radius: 0 7px 7px 0; }
+  .seg button.active { position: relative; z-index: 1; }  /* its outline sits over the neighbours it overlaps */
+  .buttons { display: flex; gap: 6px; margin-top: 8px; }
+  .buttons button { flex: 1; }
+
+  /* the panes fill the stage, left of the sidebar; each pane's controls float over it */
+  #panes { position: fixed; top: 0; bottom: 0; left: 0; right: var(--side); }
   .pane { position: absolute; inset: 0; overflow: hidden; }
   body.split .pane:first-child { right: 50%; }
-  body.split .pane + .pane { left: 50%; border-left: 2px solid #555; }
+  body.split .pane + .pane { left: 50%; border-left: 2px solid var(--line-strong); }
   .pane > .osd { position: absolute; inset: 0; }
-  .box { position: absolute; background: rgba(20, 20, 20, 0.85); border-radius: 6px; padding: 8px 10px; }
-  .panel { top: 8px; right: 8px; width: 240px; max-height: calc(100% - 240px); overflow: auto; }
-  .panel select, .panel button { font: inherit; color: inherit; background: #333; border: 1px solid #555; border-radius: 4px; padding: 3px 6px; cursor: pointer; }
-  .panel .buttons { display: flex; gap: 6px; margin-top: 6px; }
-  .panel .buttons button { flex: 1; }
-  .panel button:disabled { opacity: 0.5; cursor: default; }
-  .panel button.active { background: #066; border-color: #0ff; }
-  .panel label { display: flex; align-items: center; gap: 6px; padding: 1px 0; cursor: pointer; }
-  .panel .count { margin-left: auto; padding-left: 12px; color: #999; font-variant-numeric: tabular-nums; }
-  .panel .note { margin: 6px 0 0; color: #aaa; font-style: italic; }
-  .panel .view label { flex: 1; min-width: 0; }
-  .panel .view input { flex: 1; min-width: 0; }
-  .panel .view button { flex: none; }
-  .panel .area { display: flex; align-items: center; gap: 2px; padding: 1px 0; font-variant-numeric: tabular-nums; }
-  .panel .area input[type=text] { flex: 1; min-width: 0; font: inherit; color: inherit; background: none; border: 1px solid transparent; border-radius: 4px; padding: 1px 4px; }
-  .panel .area input[type=text]:hover, .panel .area input[type=text]:focus { border-color: #555; outline: none; }
-  .panel .area input[type=color] { width: 20px; height: 20px; padding: 0; border: none; background: none; cursor: pointer; }
-  .panel .area button { padding: 0 5px; background: none; border: none; color: #999; }
-  .panel .area button:hover { color: #fff; }
-  .panel .seg { display: flex; margin-top: 3px; }
-  .panel .seg button { flex: 1; min-width: 0; padding: 3px 2px; border-radius: 0; margin-left: -1px; }
-  .panel .seg button:first-child { border-radius: 4px 0 0 4px; margin-left: 0; }
-  .panel .seg button:last-child { border-radius: 0 4px 4px 0; }
-  .panel .dims { display: flex; align-items: center; gap: 6px; margin-top: 3px; }
-  .panel .dims input { flex: 1; min-width: 0; font: inherit; color: inherit; text-align: center; font-variant-numeric: tabular-nums; background: #333; border: 1px solid #555; border-radius: 4px; padding: 3px 2px; }
-  .panel .dims input:focus { outline: none; border-color: #0ff; }
-  .panel .dims input:disabled { opacity: 0.5; }
-  .panel .seg button.active { position: relative; z-index: 1; }  /* its outline sits over the neighbours it overlaps */
-  .panel .option { margin-top: 8px; color: #aaa; }
-  .panel .row { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
-  .panel .row > span { width: 58px; color: #aaa; }
-  .panel .row .seg { flex: 1; margin-top: 0; }
-  .panel .capture-size { margin: 8px 0 0; color: #ccc; font-variant-numeric: tabular-nums; }
-  .panel .capture-size.warn { color: #fc6; }
-  .info { bottom: 8px; left: 8px; max-width: min(360px, calc(100% - 32px)); font-variant-numeric: tabular-nums; }
-  .info summary { cursor: pointer; color: #aaa; }
-  .info table { margin: 4px 0 6px; border-spacing: 0; }
-  .info td { padding: 0; vertical-align: top; overflow-wrap: anywhere; }
-  .info td:first-child { padding-right: 10px; color: #999; white-space: nowrap; }
-  .scale { display: flex; align-items: center; gap: 8px; margin: 4px 0 3px; }
-  .scale-bar { height: 5px; border: 2px solid #fff; border-top: none; }
-  .tabs { top: 8px; left: 8px; max-width: calc(100% - 300px); display: flex; gap: 4px; overflow-x: auto; padding: 4px; }
-  .tabs .tab { flex: none; display: flex; align-items: center; gap: 6px; padding: 3px 2px 3px 8px; background: #333; border: 1px solid #555; border-radius: 4px; color: #ccc; white-space: nowrap; cursor: pointer; }
-  .tabs .tab.active { background: #066; border-color: #0ff; color: #fff; }
-  .tabs button { font: inherit; padding: 0 4px; background: none; border: none; color: #999; cursor: pointer; }
-  #drop { position: fixed; inset: 0; z-index: 10; display: grid; place-items: center; background: rgba(0, 0, 0, 0.6); border: 3px dashed #888; font-size: 20px; }
-  [hidden] { display: none !important; }
+  .hud { position: absolute; z-index: 2; }
+  .slidebar { top: 12px; left: 12px; max-width: calc(100% - 240px); display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 4px; }
+  .slidebar > button { flex: none; background: none; border-color: transparent; color: var(--muted); }
+  @media (hover: hover) { .slidebar > button:hover { color: var(--fg); background: var(--raised); } }
+  .slidebar > button.active { color: var(--accent-fg); background: var(--accent-soft); border-color: var(--accent); }
+  .tabs { display: flex; gap: 2px; min-width: 90px; overflow-x: auto; }
+  .tabs .tab { flex: none; display: flex; align-items: center; gap: 6px; padding: 3px 2px 3px 10px; border: 1px solid transparent; border-radius: 8px; color: var(--muted); white-space: nowrap; cursor: pointer; }
+  @media (hover: hover) { .tabs .tab:hover { color: var(--fg); background: var(--raised); } }
+  .tabs .tab.active { color: var(--fg); background: var(--raised); border-color: var(--line-strong); font-weight: 600; }
+  .tabs .tab button { min-height: 24px; padding: 0 6px; background: none; border: none; color: var(--faint); }
+  .no-slides { top: 50%; left: 50%; transform: translate(-50%, -50%); margin: 0; padding: 16px 20px; max-width: 300px; color: var(--muted); text-align: center; }
+  .loading { top: 64px; left: 50%; transform: translateX(-50%); margin: 0; padding: 8px 14px; max-width: calc(100% - 40px); color: var(--fg); }
+  .tools { top: 50%; left: 12px; transform: translateY(-50%); display: flex; flex-direction: column; gap: 2px; padding: 4px; }
+  .tools button { display: grid; justify-items: center; gap: 2px; width: 54px; min-height: 0; padding: 7px 0 5px; background: none; border-color: transparent; color: var(--muted); font-size: 10.5px; }
+  @media (hover: hover) { .tools button:hover { color: var(--fg); background: var(--raised); } }
+  .tools button.active { color: var(--accent-fg); background: var(--accent-soft); border-color: var(--accent); }
+  .scope { bottom: 14px; left: 50%; transform: translateX(-50%); width: max-content; max-width: calc(100% - 150px); display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 6px 12px; padding: 6px 10px; }
+  .scope .group { display: flex; align-items: center; gap: 4px; }
+  .scope .sep { width: 1px; align-self: stretch; background: var(--line); }
+  .zoom button { padding: 4px 8px; }
+  .rotation { width: 90px; }
+  .rotation-value { min-width: 36px; margin: 0; padding: 0; }
+  .info { display: flex; align-items: center; gap: 12px; }
+  .scale { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-width: 64px; }
+  .scale-bar { height: 4px; border: 1.5px solid var(--fg); border-top: none; }
+  .scale-label { font: 500 11px var(--mono); }
+  .status { min-width: 220px; color: var(--muted); font: 11px var(--mono); white-space: pre; }
+  body.split .status { display: none; }
+
+  /* the sidebar: each pane's tool options, highlights and measurements, and slide info */
+  #side { position: fixed; top: 0; right: 0; bottom: 0; z-index: 3; width: var(--side); box-sizing: border-box; display: flex; flex-direction: column; background: var(--panel); border-left: 1px solid var(--line); }
+  #side-head { display: flex; align-items: center; gap: 2px; padding: 8px 8px 8px 10px; border-bottom: 1px solid var(--line); }
+  #side-head h2 { flex: 1; margin: 0 0 0 4px; font-size: 13px; font-weight: 600; }
+  body.side-collapsed #side-head { flex-direction: column; gap: 6px; border: none; padding: 10px 0; }
+  body.side-collapsed #side-head h2, body.side-collapsed #side-scroll, body.side-collapsed #fold-side { display: none; }
+  #side-scroll { flex: 1; min-height: 0; overflow: auto; padding: 2px 14px 16px; }
+  #side h3 { margin: 16px 0 6px; font-size: 11px; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+  #side .card h3 { margin-top: 0; }
+  .pane-name { display: none; margin: 14px 0 0; font-size: 13px; font-weight: 600; }
+  body.split .pane-name { display: block; }
+  body.split .pane-side + .pane-side { margin-top: 16px; border-top: 1px solid var(--line); }
+  .card { margin-top: 12px; padding: 12px; border: 1px solid var(--accent); border-radius: 10px; background: rgba(53, 194, 189, 0.05); }
+  .card .note { margin: 0; }
+  .areas:not(:empty)::before { content: "Highlights and measurements"; display: block; margin: 16px 0 6px; font-size: 11px; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+  .area { display: flex; align-items: center; gap: 4px; padding: 1px 0; font-variant-numeric: tabular-nums; }
+  .area input[type=text] { flex: 1; min-width: 0; background: none; border: 1px solid transparent; border-radius: 6px; padding: 2px 5px; }
+  .area input[type=text]:hover, .area input[type=text]:focus { border-color: var(--line); outline: none; }
+  .area input[type=color] { width: 20px; height: 20px; padding: 0; border: none; background: none; cursor: pointer; }
+  .area button { min-height: 24px; padding: 0 6px; background: none; border: none; color: var(--faint); }
+  @media (hover: hover) { .area button:hover { color: var(--fg); background: var(--raised); } }
+  .area .count { padding-left: 4px; }
+  .option { margin-top: 10px; color: var(--muted); font-size: 12px; }
+  .option + .seg { margin-top: 4px; }
+  .dims { display: flex; align-items: center; gap: 6px; margin-top: 4px; color: var(--muted); }
+  .dims input { flex: 1; min-width: 0; text-align: center; font: 12px var(--mono); background: var(--raised); border: 1px solid var(--line); border-radius: 7px; padding: 5px 2px; }
+  .dims input:focus { outline: none; border-color: var(--accent); }
+  .dims input:disabled { opacity: 0.5; }
+  .capture-size { margin: 10px 0 0; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .capture-size.warn { color: #fc6; }
+  .metadata { margin-top: 16px; color: var(--muted); }
+  .metadata summary { cursor: pointer; font-size: 11px; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; }
+  .metadata table { margin-top: 6px; border-spacing: 0; color: var(--fg); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .metadata td { padding: 1px 0; vertical-align: top; overflow-wrap: anywhere; }
+  .metadata td:first-child { padding-right: 10px; color: var(--muted); white-space: nowrap; }
+  #drop-hint { margin-top: 16px; }
+  body.empty .navigator { display: none !important; }
+
+  /* popovers from the sidebar's head */
+  .pop { position: fixed; top: 8px; right: calc(var(--side) + 8px); z-index: 6; width: 300px; max-width: calc(100% - 32px); box-sizing: border-box; padding: 14px 16px; }
+  .pop h2 { margin: 0 0 4px; font-size: 14px; }
+  .pop .note { margin: 0 0 12px; }
+  .pop .field { margin-top: 12px; }
+  .pop .field > span { display: block; margin-bottom: 4px; color: var(--muted); font-size: 12px; }
+  #help dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin: 10px 0 0; }
+  #help dt { text-align: right; white-space: nowrap; }
+  #help dd { margin: 0; color: var(--muted); }
+  #help .keys { margin: 12px 0 0; }
+  kbd { font: 500 11px var(--mono); color: var(--fg); border: 1px solid var(--line-strong); border-radius: 4px; padding: 0 4px; }
+
+  #drop { position: fixed; inset: 0; z-index: 10; display: grid; place-items: center; background: rgba(0, 0, 0, 0.6); border: 3px dashed var(--line-strong); font-size: 20px; }
   #drop * { pointer-events: none; }
-  .disclaimer { max-width: 340px; color: #ddd; background: #222; border: 1px solid #555; border-radius: 8px; padding: 16px 18px; font: 13px/1.45 system-ui, sans-serif; }
+  .disclaimer { max-width: 340px; color: var(--fg); background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; font: 13px/1.45 system-ui, sans-serif; }
   .disclaimer::backdrop { background: rgba(0, 0, 0, 0.6); }
   .disclaimer h2 { margin: 0 0 8px; font-size: 15px; }
   .disclaimer p { margin: 0 0 14px; }
   .disclaimer a { color: inherit; }
   .disclaimer form { margin: 0; text-align: right; }
-  .disclaimer button { font: inherit; color: inherit; background: #066; border: 1px solid #0ff; border-radius: 4px; padding: 4px 14px; cursor: pointer; }
+  .disclaimer form button { padding: 4px 14px; }
+  .disclaimer form button:last-child { background: var(--accent); border-color: var(--accent); color: #062220; font-weight: 600; }
   .calibration form { display: flex; gap: 6px; justify-content: flex-end; }
-  .calibration form button:not([value=save]), .calibration .seg button { background: #333; border-color: #555; }
-  .calibration .seg { display: flex; }
-  .calibration .seg button { flex: 1; padding: 3px 2px; border-radius: 0; margin-left: -1px; }
-  .calibration .seg button:first-child { border-radius: 4px 0 0 4px; margin-left: 0; }
-  .calibration .seg button:last-child { border-radius: 0 4px 4px 0; }
-  .calibration .seg button.active { position: relative; background: #066; border-color: #0ff; }
   .calibration .reference { height: 160px; display: grid; place-items: center; }
   #calibration-shape { box-sizing: border-box; border: 1.5px solid #fff; }
   #calibration-shape.ruler { height: 14px; border-top: none; }
   .calibration input { width: 100%; }
-  #calibration-value { margin: 6px 0 14px; color: #aaa; font-variant-numeric: tabular-nums; }
+  #calibration-value { margin: 6px 0 14px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+  /* phones: the slide gets the whole screen; the sidebar folds to floating buttons and opens as a sheet over the slide */
+  @media (max-width: 760px), (max-height: 500px) {
+    body, body.side-collapsed { --side: 0px; }
+    #side { top: 8px; right: 8px; bottom: auto; width: auto; max-height: calc(100% - 16px); background: var(--glass); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 8px 28px rgba(0, 0, 0, 0.38); }
+    body.side-collapsed #side-head { gap: 2px; padding: 4px; }
+    body:not(.side-collapsed) #side { top: auto; left: 0; right: 0; bottom: 0; max-height: 60%; background: var(--panel); border-width: 1px 0 0; border-radius: 14px 14px 0 0; box-shadow: 0 -8px 28px rgba(0, 0, 0, 0.45); }
+    .pop { top: 8px; left: 8px; right: 60px; width: auto; max-width: 340px; max-height: calc(100% - 16px); overflow: auto; }
+    .slidebar { left: 8px; top: 8px; max-width: calc(100% - 72px); flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+    .status, .rotation, .rotation-value, .scope .sep, .navigator, [data-part=split] { display: none !important; }
+    .tools { left: 8px; }
+    #fold-side .ico { transform: rotate(90deg); }
+    .tools button { width: 44px; padding: 10px 0; font-size: 0; }
+    .scope { left: 8px; right: 8px; bottom: 8px; transform: none; width: auto; max-width: none; flex-wrap: nowrap; justify-content: flex-start; overflow-x: auto; scrollbar-width: none; gap: 8px; padding: 4px 6px; }
+    .scope > * { flex: none; }
+  }
+  /* a phone on its side: the open sidebar is a panel on the right instead */
+  @media (max-height: 500px) and (orientation: landscape) {
+    body:not(.side-collapsed) #side { top: 0; left: auto; max-height: none; width: min(320px, 50%); border-width: 0 0 0 1px; border-radius: 0; box-shadow: -8px 0 28px rgba(0, 0, 0, 0.45); }
+    #fold-side .ico { transform: none; }
+  }
 </style>
 </head>
-<body>
+<body class="empty">
 <dialog class="disclaimer" id="disclaimer">
   <h2>Research use only</h2>
   <p>Not for diagnosis or clinical decisions. Provided as is, without warranty. <a href="https://github.com/davidesartor/pathology#disclaimer" target="_blank" rel="noopener">Details</a></p>
@@ -97,63 +181,107 @@
   <form method="dialog"><button value="default">Default</button><button value="cancel">Cancel</button><button value="save" autofocus>Save</button></form>
 </dialog>
 <div id="panes"></div>
-<!-- one per pane; the first pane's parts also get their data-part as id -->
+<!-- one per pane; the first pane's parts also get their data-part as id. Its sidebar section moves into the sidebar -->
 <template id="pane-template">
 <div class="pane">
   <div class="osd" data-part="viewer"></div>
-  <div class="tabs box" data-part="tabs" role="tablist" hidden></div>
-  <div class="panel box" data-part="panel">
-    <p class="note" data-part="no-slides" hidden>Open a slide (.tiff, .svs, or an .mrxs folder) to start.</p>
-    <div class="buttons">
-      <button data-part="open-slide" title="TIFF or SVS slides on this computer; they are read in place, never uploaded. For MRXS, use Open folder">Open slide</button>
-      <button data-part="open-slide-folder" title="every TIFF, SVS or MRXS slide in a folder, listed at once; each is read when picked. An MRXS slide is the folder beside its .mrxs file">Open folder</button>
-    </div>
-    <div class="buttons view" data-part="view">
-      <label title="turns the view about its centre. Double-click to straighten">rotate <input data-part="rotation" type="range" min="-180" max="180" step="1" value="0"><span data-part="rotation-value" class="count">0°</span></label>
-      <button data-part="flip" title="mirrors the view left to right">Flip</button>
-    </div>
-    <div class="buttons" data-part="split-row">
-      <button data-part="split" title="a second pane on the right, with its own slide, view and tools">Side by side</button>
-      <button data-part="link" title="pan, zoom, rotate and flip both panes together">Link views</button>
-    </div>
-    <div class="seg" data-part="zoom" title="zoom as through a microscope objective of this power: the slide on screen, seen from 25 cm, looks as big as through the eyepiece. With the microscope field on, the circle shows that objective's field">
+  <div class="slidebar hud box" data-part="slidebar">
+    <div class="tabs" data-part="tabs" role="tablist" hidden></div>
+    <button data-part="split" title="a second pane on the right, with its own slide, view and tools">Side by side</button>
+    <button data-part="link" title="pan, zoom, rotate and flip both panes together">Link views</button>
+    <button data-part="open-slide" title="TIFF or SVS slides on this computer; they are read in place, never uploaded. For MRXS, use Open folder">Open slide</button>
+    <button data-part="open-slide-folder" title="every TIFF, SVS or MRXS slide in a folder, listed at once; each is read when picked. An MRXS slide is the folder beside its .mrxs file">Open folder</button>
+  </div>
+  <p class="no-slides hud box" data-part="no-slides" hidden>Open a slide (.tiff, .svs, or an .mrxs folder) to start, or drop slides or folders anywhere.</p>
+  <p class="loading hud box" data-part="loading" hidden></p>
+  <div class="tools hud box" data-part="tools" role="toolbar" aria-label="tools" hidden>
+    <button data-part="pan" class="active" title="move around: drag to pan, scroll or pinch to zoom"><svg class="ico" viewBox="0 0 20 20"><path d="M10 2v16M2 10h16M10 2 7.6 4.4M10 2l2.4 2.4M10 18l-2.4-2.4M10 18l2.4-2.4M2 10l2.4-2.4M2 10l2.4 2.4M18 10l-2.4-2.4M18 10l-2.4 2.4"/></svg>Pan</button>
+    <button data-part="highlight" title="outline areas of interest on this slide, each in its own colour and with a name; captures show them"><svg class="ico" viewBox="0 0 20 20"><path d="M4 6.5 9.5 3l6.5 3 1 7-6 4-7-3z"/><circle cx="4" cy="6.5" r="1.3" fill="currentColor"/><circle cx="16" cy="6" r="1.3" fill="currentColor"/></svg>Highlight</button>
+    <button data-part="measure" title="draw straight lines labelled with their length; captures show them"><svg class="ico" viewBox="0 0 20 20"><path d="M3 14 14 3l3 3L6 17z"/><path d="M6.5 10.5 8 12M9 8l1.5 1.5M11.5 5.5 13 7"/></svg>Measure</button>
+    <button data-part="capture" title="frame part of the slide and save it as a full-resolution PNG, turned and mirrored as on screen"><svg class="ico" viewBox="0 0 20 20"><path d="M3 7V3h4M13 3h4v4M17 13v4h-4M7 17H3v-4"/><circle cx="10" cy="10" r="2.6"/></svg>Capture</button>
+  </div>
+  <div class="scope hud box" data-part="scope" hidden>
+    <div class="seg zoom" data-part="zoom" data-tip="Objective magnification" data-tip-detail="zoom as through a microscope objective of this power: the slide on screen, seen from 25 cm, looks as big as through the eyepiece. With the microscope field on, the circle shows that objective's field">
       <button data-zoom="2.5">2.5×</button><button data-zoom="5">5×</button><button data-zoom="10">10×</button><button data-zoom="20">20×</button><button data-zoom="40">40×</button>
     </div>
-    <div class="row"><span title="the number before the slash on the eyepiece, e.g. 10 for 10×/22">Eyepiece</span><div class="seg" data-part="eyepiece-power"><button data-value="10">10×</button><button data-value="12.5">12.5×</button><button data-value="15">15×</button><button data-value="20">20×</button></div></div>
-    <div class="buttons">
-      <button data-part="field" title="dims the view outside a circle, as seen through the eyepiece; the magnifications then count how much of the slide the circle shows">Microscope field</button>
-      <button data-part="calibrate" title="match a ruler or a plug held against the screen, so the magnifications know the screen's pixel size">Calibrate screen</button>
+    <div class="sep"></div>
+    <div class="group" data-part="view">
+      <button data-part="turn-left" class="icon" data-tip="Rotate left" data-tip-detail="turn the view 15° anticlockwise"><svg class="ico" viewBox="0 0 20 20"><path d="M4.5 8A6 6 0 1 1 4 11.5"/><path d="M4 3.5V8h4.5"/></svg></button>
+      <input class="rotation" data-part="rotation" type="range" min="-180" max="180" step="1" value="0" aria-label="rotation" data-tip="Rotation" data-tip-detail="turns the view about its centre. Double-click to straighten">
+      <button data-part="turn-right" class="icon" data-tip="Rotate right" data-tip-detail="turn the view 15° clockwise"><svg class="ico" viewBox="0 0 20 20"><path d="M15.5 8A6 6 0 1 0 16 11.5"/><path d="M16 3.5V8h-4.5"/></svg></button>
+      <span class="rotation-value count" data-part="rotation-value">0°</span>
+      <button data-part="flip" class="icon" data-tip="Mirror" data-tip-detail="mirrors the view left to right"><svg class="ico" viewBox="0 0 20 20"><path d="M10 2v16M7 5 3 10l4 5zM13 5l4 5-4 5z"/></svg></button>
+      <button data-part="field" class="icon" data-tip="Microscope field" data-tip-detail="dims the view outside a circle, as seen through the eyepiece; the magnifications then count how much of the slide the circle shows"><svg class="ico" viewBox="0 0 20 20"><circle cx="10" cy="10" r="7"/><circle cx="10" cy="10" r="1.6" fill="currentColor"/></svg></button>
     </div>
-    <div class="row" data-part="field-settings" hidden><span title="the number after the slash on the eyepiece, e.g. 22 for 10×/22">Field no.</span><div class="seg" data-part="field-number"><button data-value="18">18</button><button data-value="20">20</button><button data-value="22">22</button><button data-value="25">25</button><button data-value="26.5">26.5</button></div></div>
-    <div class="buttons" data-part="area-buttons">
-      <button data-part="highlight" title="outline areas of interest on this slide, each in its own colour and with a name; captures show them">Highlight</button>
-      <button data-part="measure" title="draw straight lines labelled with their length; captures show them">Measure</button>
-      <button data-part="capture" title="frame part of the slide and save it as a full-resolution PNG, turned and mirrored as on screen">Capture</button>
+    <div class="info" data-part="info" hidden>
+      <div class="scale" data-part="scale"><div class="scale-bar" data-part="scale-bar"></div><span class="scale-label" data-part="scale-label"></span></div>
+      <div class="status" data-part="status"></div>
     </div>
-    <p class="note" data-part="draw-help" hidden>Drag to outline an area, or click to place corners. Close with Enter, a double-click or a click on the first corner. Backspace undoes, Esc cancels. Two fingers pan, pinch zooms.</p>
-    <p class="note" data-part="measure-help" hidden>Drag a line, or click its two ends. Shift keeps it level or upright. Backspace undoes, Esc stops. Two fingers pan, pinch zooms.</p>
-    <div data-part="capture-settings" hidden>
-      <p class="note">Drag the frame to move it and its corners to resize it, or type its size; drag outside it to pan. Enter saves, Esc closes.</p>
-      <div class="option">Shape</div>
-      <div class="seg" data-part="capture-shape"><button data-value="free">Free</button><button data-value="1:1">1:1</button><button data-value="4:3">4:3</button><button data-value="3:2">3:2</button><button data-value="16:9">16:9</button><button data-part="capture-turn" title="swap width and height">⤾</button></div>
-      <div class="option">Size (µm)</div>
-      <div class="dims"><input type="text" inputmode="decimal" data-part="capture-width" title="width in µm; Enter sets it">×<input type="text" inputmode="decimal" data-part="capture-height" title="height in µm; Enter sets it"></div>
-      <div class="option">Scale bar</div>
-      <div class="seg" data-part="capture-corner"><button data-value="top-left" title="top left">↖</button><button data-value="top-right" title="top right">↗</button><button data-value="bottom-left" title="bottom left">↙</button><button data-value="bottom-right" title="bottom right">↘</button><button data-value="none">None</button></div>
-      <p class="capture-size" data-part="capture-size"></p>
-      <div class="buttons"><button data-part="capture-save">Save PNG</button></div>
-    </div>
-    <div data-part="areas"></div>
-    <p class="note" data-part="loading" hidden></p>
-    <p class="note" data-part="drop-hint">or drop slides or folders anywhere</p>
   </div>
-  <div class="info box" data-part="info" hidden>
-    <details data-part="metadata"><summary>Slide info</summary><table></table></details>
-    <div class="scale" data-part="scale"><div class="scale-bar" data-part="scale-bar"></div><span data-part="scale-label"></span></div>
-    <div data-part="status"></div>
-  </div>
+  <section class="pane-side" data-part="pane-side">
+    <h2 class="pane-name" data-part="pane-name"></h2>
+    <div class="card" data-part="toolopts" hidden>
+      <div data-part="draw-help" hidden>
+        <h3>Highlight</h3>
+        <p class="note">Drag to outline an area, or click to place corners. Close with Enter, a double-click or a click on the first corner. Backspace undoes, Esc cancels. Two fingers pan, pinch zooms.</p>
+        <div class="buttons"><button data-part="highlight-undo" title="undo the last change; Backspace also does">Undo</button></div>
+      </div>
+      <div data-part="measure-help" hidden>
+        <h3>Measure</h3>
+        <p class="note">Drag a line, or click its two ends. Shift keeps it level or upright. Backspace undoes, Esc stops. Two fingers pan, pinch zooms.</p>
+        <div class="buttons"><button data-part="measure-undo" title="undo the last change; Backspace also does">Undo</button></div>
+      </div>
+      <div data-part="capture-settings" hidden>
+        <h3>Capture</h3>
+        <p class="note">Drag the frame to move it and its corners to resize it, or type its size; drag outside it to pan. Enter saves, Esc closes.</p>
+        <div class="option">Shape</div>
+        <div class="seg" data-part="capture-shape"><button data-value="free">Free</button><button data-value="1:1">1:1</button><button data-value="4:3">4:3</button><button data-value="3:2">3:2</button><button data-value="16:9">16:9</button><button data-part="capture-turn" title="swap width and height">⤾</button></div>
+        <div class="option">Size (µm)</div>
+        <div class="dims"><input type="text" inputmode="decimal" data-part="capture-width" title="width in µm; Enter sets it">×<input type="text" inputmode="decimal" data-part="capture-height" title="height in µm; Enter sets it"></div>
+        <div class="option">Scale bar</div>
+        <div class="seg" data-part="capture-corner"><button data-value="top-left" title="top left">↖</button><button data-value="top-right" title="top right">↗</button><button data-value="bottom-left" title="bottom left">↙</button><button data-value="bottom-right" title="bottom right">↘</button><button data-value="none">None</button></div>
+        <p class="capture-size" data-part="capture-size"></p>
+        <div class="buttons"><button data-part="capture-save" class="primary">Save PNG</button></div>
+      </div>
+    </div>
+    <div class="areas" data-part="areas"></div>
+    <details class="metadata" data-part="metadata" hidden><summary>Slide info</summary><table></table></details>
+  </section>
 </div>
 </template>
+<aside id="side" aria-label="layers">
+  <div id="side-head">
+    <button id="toggle-side" class="icon" data-tip="Hide layers"><svg class="ico" viewBox="0 0 20 20"><path d="m10 3 7 4-7 4-7-4z"/><path d="m3 10.5 7 4 7-4"/><path d="m3 14 7 4 7-4"/></svg></button>
+    <h2>Layers</h2>
+    <button id="open-settings" class="icon" data-tip="Settings" data-tip-detail="eyepiece, field number and screen calibration"><svg class="ico" viewBox="0 0 20 20"><circle cx="10" cy="10" r="2.8"/><path d="M10 2v2.4M10 15.6V18M2 10h2.4M15.6 10H18M4.3 4.3 6 6M14 14l1.7 1.7M4.3 15.7 6 14M14 6l1.7-1.7"/></svg></button>
+    <button id="open-help" class="icon" data-tip="Help" data-tip-detail="how to move around"><svg class="ico" viewBox="0 0 20 20"><circle cx="10" cy="10" r="7.5"/><path d="M7.8 7.8a2.3 2.3 0 1 1 3 2.2c-.6.2-.8.7-.8 1.3v.4"/><circle cx="10" cy="14.2" r=".6" fill="currentColor"/></svg></button>
+    <button id="fold-side" class="icon" data-tip="Hide layers"><svg class="ico" viewBox="0 0 20 20"><path d="m8 5 5 5-5 5"/></svg></button>
+  </div>
+  <div id="side-scroll">
+    <div id="pane-sides"></div>
+    <p id="drop-hint" class="note">Slides and folders can also be dropped anywhere.</p>
+  </div>
+</aside>
+<div id="settings" class="box pop" hidden>
+  <h2>Microscope and screen</h2>
+  <p class="note">Set once per microscope and screen; the objective buttons use them to match what the eyepiece shows.</p>
+  <div class="field"><span title="the number before the slash on the eyepiece, e.g. 10 for 10×/22">Eyepiece power</span><div class="seg" id="eyepiece-power"><button data-value="10">10×</button><button data-value="12.5">12.5×</button><button data-value="15">15×</button><button data-value="20">20×</button></div></div>
+  <div class="field"><span title="the number after the slash on the eyepiece, e.g. 22 for 10×/22; used by the microscope field">Field number</span><div class="seg" id="field-number"><button data-value="18">18</button><button data-value="20">20</button><button data-value="22">22</button><button data-value="25">25</button><button data-value="26.5">26.5</button></div></div>
+  <div class="field"><span>Screen</span><button id="calibrate" title="match a ruler or a plug held against the screen, so the magnifications know the screen's pixel size">Calibrate screen</button></div>
+</div>
+<div id="help" class="box pop" hidden>
+  <h2>Moving around</h2>
+  <dl>
+    <dt>Drag</dt><dd>Pan (with the Pan tool)</dd>
+    <dt>Scroll, pinch</dt><dd>Zoom</dd>
+    <dt>Click, <kbd>Shift</kbd>-click</dt><dd>Zoom in, out (with the Pan tool)</dd>
+    <dt><kbd>R</kbd>, <kbd>Shift</kbd>+<kbd>R</kbd></dt><dd>Turn 90°</dd>
+    <dt><kbd>F</kbd></dt><dd>Flip left to right</dd>
+    <dt><kbd>0</kbd></dt><dd>Whole slide</dd>
+    <dt><kbd>Esc</kbd></dt><dd>Leave the tool</dd>
+  </dl>
+  <p class="note keys">Keys work once the slide has been clicked. Each tool lists its own keys when picked.</p>
+</div>
 <input id="slide-file" type="file" accept=".tif,.tiff,.btf,.tf8,.svs,.mrxs" multiple hidden>
 <input id="slide-folder" type="file" webkitdirectory hidden>
 <div id="drop" hidden><span>Drop slides or folders</span></div>
@@ -816,12 +944,69 @@ $("calibration").addEventListener("close", () => {
   panes.forEach(pane => pane.showEyepiece());
 });
 
+// the sidebar folds to a strip of buttons; it starts open where there is room (not on an upright iPad), then as last left.
+// On a phone it is a sheet over the slide, so it starts folded there and is not remembered
+const phone = matchMedia("(max-width: 760px), (max-height: 500px)");
+let sideCollapsed = false;
+const setSideCollapsed = collapsed => {
+  sideCollapsed = collapsed;
+  document.body.classList.toggle("side-collapsed", collapsed);
+  $("toggle-side").dataset.tip = collapsed ? "Show layers" : "Hide layers";
+  if (!phone.matches) try { localStorage.setItem("side-collapsed", collapsed); } catch {}
+};
+const restoreSide = () => {
+  try { setSideCollapsed(phone.matches || (localStorage.getItem("side-collapsed") ?? String(innerWidth < 1000)) === "true"); } catch { setSideCollapsed(phone.matches || innerWidth < 1000); }
+};
+restoreSide();
+phone.addEventListener("change", restoreSide);
+$("toggle-side").addEventListener("click", () => setSideCollapsed(!sideCollapsed));
+$("fold-side").addEventListener("click", () => setSideCollapsed(true));
+
+// short names for the icon controls: on hover with a mouse or pen, and while pressed and briefly after on touch screens
+const tip = Object.assign(document.createElement("div"), {className: "tip", hidden: true});
+document.body.append(tip);
+let tipTimer, tipFor = null;
+const showTip = (target, touch) => {
+  const name = Object.assign(document.createElement("b"), {textContent: target.dataset.tip});
+  const detail = !touch && target.dataset.tipDetail && Object.assign(document.createElement("span"), {textContent: target.dataset.tipDetail});
+  tip.replaceChildren(name, ...(detail ? [detail] : []));
+  tip.hidden = false;
+  const box = target.getBoundingClientRect(), size = tip.getBoundingClientRect();
+  tip.style.left = `${Math.max(8, Math.min(box.left + box.width / 2 - size.width / 2, innerWidth - size.width - 8))}px`;
+  tip.style.top = `${box.top - size.height - 8 > 0 ? box.top - size.height - 8 : box.bottom + 8}px`;
+};
+const hideTip = () => { clearTimeout(tipTimer); tipFor = null; tip.hidden = true; };
+document.addEventListener("pointerover", event => {
+  const target = event.target.closest?.("[data-tip]");
+  if (event.pointerType === "touch" || !target || target === tipFor) return;
+  hideTip();
+  tipFor = target;
+  tipTimer = setTimeout(() => showTip(target, false), 300);
+});
+document.addEventListener("pointerout", event => {
+  if (event.pointerType !== "touch" && !tipFor?.contains(event.relatedTarget)) hideTip();
+});
+document.addEventListener("pointerdown", event => {
+  hideTip();
+  const target = event.target.closest?.("[data-tip]");
+  if (event.pointerType !== "touch" || !target) return;
+  showTip(target, true);
+  tipFor = target;
+});
+document.addEventListener("pointerup", event => {
+  if (event.pointerType === "touch" && tipFor) tipTimer = setTimeout(hideTip, 1500);
+});
+
 function createPane(index) {
   const root = $("pane-template").content.firstElementChild.cloneNode(true);
-  const part = name => root.querySelector(`[data-part="${name}"]`);
+  const side = root.querySelector('[data-part="pane-side"]');
+  const part = name => root.querySelector(`[data-part="${name}"]`) ?? side.querySelector(`[data-part="${name}"]`);
   if (index === 0) for (const element of root.querySelectorAll("[data-part]")) element.id = element.dataset.part;
+  // the pane's tool options, highlights and slide info live in the sidebar
   $("panes").append(root);
-  const viewer = OpenSeadragon({prefixUrl: "https://cdn.jsdelivr.net/npm/openseadragon@5.0.1/build/openseadragon/images/", drawer: "canvas", maxZoomPixelRatio: 4, element: part("viewer"), showNavigator: true, navigatorPosition: "BOTTOM_RIGHT"});
+  $("pane-sides").append(side);
+  part("pane-name").textContent = index === 0 ? "Left" : "Right";
+  const viewer = OpenSeadragon({prefixUrl: "https://cdn.jsdelivr.net/npm/openseadragon@5.0.1/build/openseadragon/images/", drawer: "canvas", maxZoomPixelRatio: 4, element: part("viewer"), showNavigator: true, navigatorPosition: "TOP_RIGHT", showNavigationControl: false});
   // the overlay canvas sits inside OSD's canvas container so the navigator stays on top
   const overlay = document.createElement("canvas");
   overlay.style.cssText = "position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none";
@@ -832,7 +1017,7 @@ function createPane(index) {
   let wanted = null;  // the slide last picked, which may still be opening
   const views = new Map();  // slide -> {bounds, rotation, flip} when it was last left in this pane
   const pane = {
-    index, root, viewer,
+    index, root, side, viewer,
     get slide() { return slide; },
     get busy() { return drawing || measuring || capturing; },
     show, close, renderTabs, renderControls, renderAreas, draw, setLoading, key, setDrawing, setMeasuring, setCapturing,
@@ -885,7 +1070,7 @@ function createPane(index) {
     if (slide !== entry) return renderTabs();
     slide = wanted = null;
     [draft, draftStrokes] = [[], []];
-    part("info").hidden = true;
+    part("info").hidden = part("metadata").hidden = true;
     viewer.close();
     if (index === 0) document.title = "Slide viewer";
     renderAreas();
@@ -910,10 +1095,10 @@ function createPane(index) {
   }
 
   function renderControls() {
-    part("tabs").hidden = part("view").hidden = part("zoom").hidden = part("area-buttons").hidden = !slides.length;
-    part("no-slides").hidden = part("drop-hint").hidden = slides.length > 0;
-    part("split-row").hidden = !slides.length;
-    part("split").hidden = index > 0;
+    part("tabs").hidden = part("tools").hidden = part("scope").hidden = !slides.length;
+    part("no-slides").hidden = slides.length > 0;
+    if (index === 0) document.body.classList.toggle("empty", !slides.length);
+    part("split").hidden = index > 0 || !slides.length;
     part("split").classList.toggle("active", split);
     part("link").hidden = !split;
     part("link").classList.toggle("active", linked);
@@ -942,6 +1127,8 @@ function createPane(index) {
   part("rotation").addEventListener("input", () => setView(Number(part("rotation").value), viewer.viewport.getFlip()));
   part("rotation").addEventListener("dblclick", () => setView(0, viewer.viewport.getFlip()));
   part("flip").addEventListener("click", () => setView(viewer.viewport.getRotation(), !viewer.viewport.getFlip()));
+  part("turn-left").addEventListener("click", () => setView(straight(viewer.viewport.getRotation() - 15), viewer.viewport.getFlip()));
+  part("turn-right").addEventListener("click", () => setView(straight(viewer.viewport.getRotation() + 15), viewer.viewport.getFlip()));
   viewer.addHandler("update-viewport", () => {
     if (activePane === pane && linkedTo(pane)) follow(viewer, linkedTo(pane).viewer);
     draw();
@@ -1012,17 +1199,23 @@ function createPane(index) {
     [drawing, measuring, capturing] = ["highlight", "measure", "capture"].map(name => name === tool);
     measureStart = null;
     setToolGestures(drawing || measuring);
-    part("highlight").textContent = drawing ? "Done" : "Highlight";
-    part("measure").textContent = measuring ? "Done" : "Measure";
-    part("capture").textContent = capturing ? "Done" : "Capture";
     for (const name of ["highlight", "measure", "capture"]) part(name).classList.toggle("active", name === tool);
+    part("pan").classList.toggle("active", !tool);
+    part("toolopts").hidden = !tool;
     part("draw-help").hidden = !drawing;
     part("measure-help").hidden = !measuring;
     part("capture-settings").hidden = !capturing;
     viewer.navigator.element.parentElement.style.display = capturing ? "none" : "inline-block";  // it would cover the frame's corner
+    // the tool's options are in the sidebar; opening it narrows the slide, so the frame is placed again once it has.
+    // On a phone the sheet would cover the slide, so it opens only for the capture's Save button
+    if (tool && sideCollapsed && (capturing || !phone.matches)) {
+      setSideCollapsed(false);
+      viewer.addOnceHandler("resize", () => { if (capturing) { placeFrame(); draw(); } });
+    }
     if (capturing) placeFrame();
     draw();
   }
+  part("pan").addEventListener("click", () => setTool(null));
   function setDrawing(on) { setTool(on ? "highlight" : drawing ? null : capturing ? "capture" : measuring ? "measure" : null); }
   function setMeasuring(on) { setTool(on ? "measure" : measuring ? null : drawing ? "highlight" : capturing ? "capture" : null); }
   function setCapturing(on) { setTool(on ? "capture" : capturing ? null : drawing ? "highlight" : measuring ? "measure" : null); }
@@ -1194,6 +1387,8 @@ function createPane(index) {
     saveArea({ring: frameRing()});
   }
   part("capture-save").addEventListener("click", saveFrame);
+  part("highlight-undo").addEventListener("click", undo);
+  part("measure-undo").addEventListener("click", () => measureStart ? (measureStart = null, draw()) : undo());
 
   viewer.addHandler("canvas-press", event => { if (drawing) pressed = {position: event.position, dragged: false}; });
   viewer.addHandler("canvas-drag", event => {
@@ -1254,11 +1449,13 @@ function createPane(index) {
     else viewer.viewport.panBy(viewer.viewport.deltaPointsFromPixels(new OpenSeadragon.Point((viewer.viewport.getFlip() ? -1 : 1) * event.deltaX * unit, event.deltaY * unit)), true);
     viewer.viewport.applyConstraints();
   }, {capture: true, passive: false});
-  let gestureScale = 1;
+  let gestureScale = 1, touches = 0;  // iOS also sends a touch pinch as gesture events, which OSD has already zoomed by
+  for (const type of ["touchstart", "touchend", "touchcancel"]) viewer.container.addEventListener(type, event => touches = event.touches.length, {passive: true});
   viewer.container.addEventListener("gesturestart", event => { if (drawing || measuring) { event.preventDefault(); gestureScale = 1; } });
   viewer.container.addEventListener("gesturechange", event => {
     if (!drawing && !measuring) return;
     event.preventDefault();
+    if (touches) return;
     viewer.viewport.zoomBy(event.scale / gestureScale, pointerPoint(event), true);
     viewer.viewport.applyConstraints();
     gestureScale = event.scale;
@@ -1318,7 +1515,7 @@ function createPane(index) {
   part("metadata").open = infoOpen();
   part("metadata").addEventListener("toggle", () => { try { localStorage.setItem("slide-info-open", part("metadata").open); } catch {} });
   function renderInfo(scale) {
-    part("info").hidden = false;
+    part("info").hidden = part("metadata").hidden = false;
     if (infoSlide !== slide) {
       infoSlide = slide;
       part("metadata").querySelector("table").replaceChildren(...slide.metadata.map(row => {
@@ -1386,21 +1583,8 @@ function createPane(index) {
     ctx.strokeStyle = "rgba(255, 255, 255, 0.3)";
     ctx.stroke();
   }
-  const showEyepiece = () => {
-    part("field").classList.toggle("active", eyepiece.field);
-    part("field-settings").hidden = !eyepiece.field;
-    for (const button of part("eyepiece-power").children) button.classList.toggle("active", Number(button.dataset.value) === eyepiece.power);
-    for (const button of part("field-number").children) button.classList.toggle("active", Number(button.dataset.value) === eyepiece.fieldNumber);
-  };
-  const changeEyepiece = change => {
-    Object.assign(eyepiece, change);
-    try { localStorage.setItem("eyepiece", JSON.stringify(eyepiece)); } catch {}
-    panes.forEach(other => other.showEyepiece());
-  };
+  const showEyepiece = () => part("field").classList.toggle("active", eyepiece.field);
   part("field").addEventListener("click", () => changeEyepiece({field: !eyepiece.field}));
-  for (const button of part("eyepiece-power").children) button.addEventListener("click", () => changeEyepiece({power: Number(button.dataset.value)}));
-  for (const button of part("field-number").children) button.addEventListener("click", () => changeEyepiece({fieldNumber: Number(button.dataset.value)}));
-  part("calibrate").addEventListener("click", calibrateScreen);
   showEyepiece();
   pane.showEyepiece = () => { showEyepiece(); draw(); };
 
@@ -1473,7 +1657,37 @@ function createPane(index) {
 }
 
 panes.push(createPane(0), createPane(1));
-panes[1].root.hidden = true;
+panes[1].root.hidden = panes[1].side.hidden = true;
+
+// the eyepiece and the screen are the same for both panes; they are set in the settings popover
+function showSettings() {
+  for (const button of $("eyepiece-power").children) button.classList.toggle("active", Number(button.dataset.value) === eyepiece.power);
+  for (const button of $("field-number").children) button.classList.toggle("active", Number(button.dataset.value) === eyepiece.fieldNumber);
+}
+function changeEyepiece(change) {
+  Object.assign(eyepiece, change);
+  try { localStorage.setItem("eyepiece", JSON.stringify(eyepiece)); } catch {}
+  panes.forEach(pane => pane.showEyepiece());
+  showSettings();
+}
+for (const button of $("eyepiece-power").children) button.addEventListener("click", () => changeEyepiece({power: Number(button.dataset.value)}));
+for (const button of $("field-number").children) button.addEventListener("click", () => changeEyepiece({fieldNumber: Number(button.dataset.value)}));
+$("calibrate").addEventListener("click", calibrateScreen);
+showSettings();
+
+// the settings and help popovers: one open at a time, closed by a click elsewhere or Esc
+const popovers = [["open-settings", "settings"], ["open-help", "help"]];
+const closePopovers = () => { for (const [button, popover] of popovers) { $(popover).hidden = true; $(button).classList.remove("active"); } };
+for (const [button, popover] of popovers) {
+  $(button).addEventListener("click", () => {
+    const open = $(popover).hidden;
+    closePopovers();
+    $(popover).hidden = !open;
+    $(button).classList.toggle("active", open);
+  });
+}
+document.addEventListener("pointerdown", event => { if (!event.target.closest(".pop, #open-settings, #open-help, dialog")) closePopovers(); });
+window.addEventListener("keydown", event => { if (event.key === "Escape") closePopovers(); });
 activePane = panes[0];
 // the first pane under the annotator's names, so both pages can be scripted alike
 Object.defineProperties(window, {viewer: {get: () => panes[0].viewer}, slide: {get: () => panes[0].slide}});
@@ -1489,7 +1703,7 @@ function areasChanged(entry, typing = null) {
 function setSplit(on) {
   split = on;
   document.body.classList.toggle("split", on);
-  panes[1].root.hidden = !on;
+  panes[1].root.hidden = panes[1].side.hidden = !on;
   if (!on) {
     panes[1].setDrawing(false);
     panes[1].setMeasuring(false);
@@ -1621,13 +1835,14 @@ async function droppedFolder(handle, entry) {
 const paneAt = (x, y) => panes.find(pane => { const rect = pane.root.getBoundingClientRect(); return !pane.root.hidden && x >= rect.left && x < rect.right && y >= rect.top && y < rect.bottom; }) ?? panes[0];
 window.addEventListener("dragenter", event => { if (event.dataTransfer.types.includes("Files")) $("drop").hidden = false; });
 window.addEventListener("dragover", event => event.preventDefault());
-window.addEventListener("drop", event => event.preventDefault());
 $("drop").addEventListener("dragleave", () => { $("drop").hidden = true; });
-$("drop").addEventListener("drop", async event => {
+// handled on the whole page, not only on the overlay: Safari on the iPad may not say a drag holds files until the drop
+window.addEventListener("drop", async event => {
+  event.preventDefault();
   $("drop").hidden = true;
   const pane = paneAt(event.clientX, event.clientY);
   // every item must be read before the first await, after which the drop data is gone
-  const dropped = [...event.dataTransfer.items].map(item => [item.getAsFileSystemHandle?.().catch(() => null), item.webkitGetAsEntry(), item.getAsFile()]);
+  const dropped = [...event.dataTransfer.items].map(item => [item.getAsFileSystemHandle?.().catch(() => null), item.webkitGetAsEntry?.(), item.getAsFile()]);
   const files = dropped.map(([, , file]) => file).filter(file => file && isTIFF(file.name));
   if (files.length) await addSlideFiles(files, undefined, [], pane);
   for (const [handle, entry, file] of dropped.filter(([, , file]) => !(file && isTIFF(file.name)))) {

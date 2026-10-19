@@ -14,7 +14,7 @@ from slides import pattern, write_mrxs, write_tiff
 
 ROOT = Path(__file__).parent.parent
 PAGES = ["slide-viewer.html", "slide-annotator.html"]
-SIZE = {"width": 1000, "height": 800}
+SIZE = {"width": 1320, "height": 800}  # a 1000 × 800 stage beside the 320 px sidebar
 
 
 @pytest.fixture(scope="session")
@@ -85,6 +85,12 @@ def drag(page: Page, start: tuple[float, float], end: tuple[float, float]):
     page.mouse.down()
     page.mouse.move(*end, steps=10)
     page.mouse.up()
+
+
+def open_settings(page: Page):
+    """Open the microscope and screen settings popover."""
+    if page.locator("#settings").is_hidden():
+        page.click("#open-settings")
 
 
 def set_view(page: Page, rotation: float, flip: bool):
