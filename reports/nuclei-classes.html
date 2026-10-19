@@ -1,0 +1,355 @@
+<title>Nucleus Classifier Classes</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,650&family=Source+Sans+3:wght@400;600&family=JetBrains+Mono:wght@400&display=swap">
+<style>
+/* Layout: one narrow column; a tab per model; each tab = classes, published per-class scores; PUMA and CellViT tabs add our confusion matrix. */
+:root {
+  --bg: #f9f9f7;
+  --surface: #fcfcfb;
+  --fg: #1b1b1a;
+  --muted: #5f5e59;
+  --line: #e1e0d9;
+  --accent: #256abf;
+  --on-accent: #ffffff;
+  /* one-hue blue scale, 0% to 100% of a row */
+  --s0: #fcfcfb; --s1: #cde2fb; --s2: #9ec5f4; --s3: #6da7ec; --s4: #3987e5; --s5: #256abf; --s6: #184f95; --s7: #0d366b;
+  --on-seq-hi: #ffffff;
+  --display: "Source Serif 4", Georgia, "Times New Roman", serif;
+  --body: "Source Sans 3", "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #111110; --surface: #1a1a19; --fg: #f0efec; --muted: #a9a8a0; --line: #2f2f2c;
+    --accent: #6da7ec; --on-accent: #111110; --s0: #1a1a19; --s1: #0d2a52; --s2: #104281; --s3: #1c5cab; --s4: #2a78d6; --s5: #5598e7; --s6: #86b6ef; --s7: #cde2fb; --on-seq-hi: #111110; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #111110; --surface: #1a1a19; --fg: #f0efec; --muted: #a9a8a0; --line: #2f2f2c;
+  --accent: #6da7ec; --on-accent: #111110; --s0: #1a1a19; --s1: #0d2a52; --s2: #104281; --s3: #1c5cab; --s4: #2a78d6; --s5: #5598e7; --s6: #86b6ef; --s7: #cde2fb; --on-seq-hi: #111110; color-scheme: dark;
+}
+body { background: var(--bg); color: var(--fg); font: 16px/1.55 var(--body); }
+.page { max-width: 820px; margin: 0 auto; padding: 32px 16px 56px; }
+h1, h2, h3 { font-family: var(--display); font-weight: 650; text-wrap: balance; line-height: 1.2; margin: 0; }
+h1 { font-size: 1.9rem; }
+h2 { font-size: 1.3rem; }
+h3 { font-size: 1.1rem; }
+p { margin: 0; max-width: 68ch; }
+a { color: var(--accent); }
+.muted { color: var(--muted); }
+header { display: grid; gap: 8px; margin-bottom: 24px; }
+
+.tabs { display: flex; flex-wrap: wrap; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 24px; }
+.tab { font: 600 0.95rem var(--body); color: var(--muted); background: none; border: 0; border-bottom: 3px solid transparent;
+  padding: 10px 14px 9px; cursor: pointer; }
+.tab:hover { color: var(--fg); }
+.tab[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); }
+.tab:focus-visible, .seg button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+
+.panel { display: grid; gap: 16px; }
+.panel > * { min-width: 0; }
+.meta { font-size: 0.9rem; color: var(--muted); }
+.meta .mono { font-family: var(--mono); font-size: 0.82rem; color: var(--fg); overflow-wrap: anywhere; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip { display: inline-flex; align-items: center; gap: 7px; padding: 4px 11px 4px 8px; border: 1px solid var(--line);
+  border-radius: 999px; background: var(--surface); font-size: 0.92rem; }
+.chip i { width: 11px; height: 11px; border-radius: 50%; flex: none; }
+
+.tbl-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; font-size: 0.92rem; }
+th, td { padding: 7px 12px; text-align: right; border-bottom: 1px solid var(--line); white-space: nowrap; }
+thead th { font-weight: 600; font-size: 0.82rem; color: var(--muted); vertical-align: bottom; }
+th[scope="row"], thead th:first-child { text-align: left; }
+th[scope="row"] { font-weight: 600; }
+tbody tr:last-child > * { border-bottom: 0; }
+tr.total > * { border-top: 2px solid var(--line); color: var(--muted); }
+td { font-family: var(--mono); font-size: 0.85rem; }
+.notes { margin: 0; padding-left: 1.2em; display: grid; gap: 4px; font-size: 0.92rem; color: var(--muted); max-width: 68ch; }
+
+/* confusion matrix */
+.cm { display: grid; gap: 12px; padding-top: 20px; border-top: 1px solid var(--line); margin-top: 8px; }
+.cm > * { min-width: 0; }
+.controls { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--surface); }
+.seg button { font: 600 0.85rem var(--body); color: var(--muted); background: none; border: 0; padding: 6px 12px; cursor: pointer; }
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); }
+.matrix { width: auto; border-collapse: separate; border-spacing: 2px; font-size: 0.82rem; }
+.matrix th, .matrix td { padding: 0; border: 0; text-align: center; }
+.matrix td { width: 3.3em; height: 2.5em; border-radius: 3px; font-family: var(--body); font-size: 0.82rem; }
+.matrix td.total { font-family: var(--mono); }
+.matrix td.zero { color: var(--muted); opacity: 0.6; }
+.matrix td.diag { font-weight: 600; box-shadow: inset 0 0 0 1.5px var(--fg); }
+.matrix thead th { vertical-align: bottom; font-weight: 600; color: var(--fg); padding-bottom: 6px; }
+.matrix thead th span { writing-mode: vertical-rl; transform: rotate(180deg); white-space: nowrap; display: inline-block; text-align: left; }
+.matrix thead th.corner { text-align: left; vertical-align: bottom; padding-right: 10px; }
+.matrix th[scope="row"] { text-align: right; padding-right: 10px; font-weight: 600; white-space: nowrap;
+  position: sticky; left: 0; background: var(--surface); z-index: 1; }
+.matrix .err { color: var(--muted); font-style: italic; font-weight: 600; }
+.matrix td.gap-left, .matrix th.gap-left { border-left: 8px solid var(--surface); }
+.matrix tr.gap-top > * { border-top: 8px solid var(--surface); }
+.matrix .total { color: var(--muted); font-size: 0.75rem; padding-left: 8px; text-align: left; width: auto; }
+.axis { font: 600 0.72rem var(--body); letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); line-height: 1.5; }
+.cm .tbl-wrap { padding: 12px 12px 10px; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 0.85rem; color: var(--muted); align-items: center; }
+.legend i { display: inline-block; width: 120px; height: 10px; border-radius: 2px; vertical-align: -1px; margin-right: 6px; }
+.headline { font-size: 0.95rem; max-width: 68ch; }
+
+footer { margin-top: 36px; padding-top: 14px; border-top: 1px solid var(--line); color: var(--muted); font-size: 0.86rem; display: grid; gap: 10px; }
+.glossary { display: grid; grid-template-columns: max-content 1fr; gap: 3px 14px; margin: 0; }
+.glossary dt { color: var(--fg); font-weight: 600; }
+.glossary dd { margin: 0; }
+@media (max-width: 560px) { h1 { font-size: 1.55rem; } .tab { padding: 8px 10px; } .glossary { grid-template-columns: 1fr; } .glossary dd { margin-bottom: 6px; } }
+</style>
+
+<div class="page">
+  <header>
+    <h1>Nucleus classifier classes</h1>
+    <p class="muted">The classes each of our models predicts, the per-class scores from its paper, and, for one model per dataset, a confusion matrix we computed ourselves, since no paper reports one: the ten-class PUMA model on the PUMA regions and CellViT-256 on PanNuke. Each runs the released checkpoint on the dataset it was trained on.</p>
+  </header>
+
+  <nav class="tabs" role="tablist" id="tabs"></nav>
+  <main id="panels"></main>
+
+  <footer>
+    <dl class="glossary">
+      <dt>F1 score</dt><dd>Harmonic mean of precision and recall, after matching predicted nuclei to annotated ones.</dd>
+      <dt>Balanced accuracy</dt><dd>One class against all others: the mean of sensitivity and specificity.</dd>
+      <dt>Panoptic quality</dt><dd>F1 score multiplied by how well matched nuclei overlap. It scores finding and outlining together.</dd>
+      <dt>All nuclei</dt><dd>Nucleus versus background, ignoring the class.</dd>
+      <dt>Matching</dt><dd>Each predicted nucleus is paired with at most one annotated nucleus by optimal assignment of centroids, if the centroids are closer than 3 micrometers. This is the HoVer-NeXt evaluation rule (12 pixels at 0.25 micrometers per pixel).</dd>
+      <dt>Share of true class</dt><dd>Each annotated class's row divided by its total, so the diagonal is recall and the missed column is the share never detected.</dd>
+      <dt>False positive</dt><dd>A predicted nucleus with no annotated nucleus within 3 micrometers. Its row is shared out over the predicted classes.</dd>
+    </dl>
+    <p>Sources: <a href="https://proceedings.mlr.press/v250/baumann24a.html">HoVer-NeXt paper (MIDL 2024)</a> · <a href="https://arxiv.org/abs/2306.15350">CellViT paper (arXiv 2306.15350)</a> · <a href="https://doi.org/10.1093/gigascience/giaf011">PUMA dataset paper (GigaScience 2025)</a></p>
+  </footer>
+</div>
+
+<script>
+const COLORS = ["#007fff", "#ff0000", "#ffb366", "#00c800", "#c800c8", "#00c8c8", "#783c00"];
+const RESULTS = {"cellvit_256":{"model":"cellvit_256","checkpoint":"CellViT-256-x40-AMP.pth","dataset":"pannuke","split":"fold3","images":2722,"mpp":0.25,"match_radius_px":12.0,"match_radius_micrometers":3.0,"test_time_views":1,"gt_classes":["neoplastic","inflammatory","connective","dead","epithelial","false_positive"],"pred_classes":["neoplastic","inflammatory","connective","dead","epithelial","missed"],"counts":[[24038,392,631,88,21,3301],[284,8533,792,7,78,1131],[643,897,12687,48,183,2983],[25,12,19,675,0,326],[5,56,140,0,7761,898],[2933,626,2271,54,790,0]],"unclassified_gt_nuclei_dropped":0,"notes":["The released CellViT checkpoints were trained on 90 percent of all three PanNuke folds, so no fold is held out: this is mostly training data and the matrix is optimistic. Only fold 3 is run. No test-time augmentation, as upstream."],"seconds":436},"hovernext_puma10_base":{"model":"hovernext_puma10_base","checkpoint":"puma10_convnextv2_base","dataset":"puma","split":"all 206 training regions of interest","images":206,"mpp":0.2263,"match_radius_px":13.256738842244808,"match_radius_micrometers":3.0,"test_time_views":1,"gt_classes":["tumor","lymphocyte","plasma_cell","histiocyte","melanophage","neutrophil","stroma","epithelium","endothelium","apoptosis","false_positive"],"pred_classes":["tumor","lymphocyte","plasma_cell","histiocyte","melanophage","neutrophil","stroma","epithelium","endothelium","apoptosis","missed"],"counts":[[44877,4636,500,1601,143,12,635,316,1015,124,3559],[1082,18041,157,854,48,37,204,7,100,63,1048],[35,127,330,10,0,0,0,0,0,1,17],[940,1432,54,3326,37,4,319,2,498,8,547],[138,42,1,50,291,1,78,3,7,0,84],[21,140,10,1,4,96,0,0,0,80,14],[850,574,4,344,29,1,1259,56,394,8,337],[1524,48,2,27,10,0,45,267,130,0,158],[146,73,1,95,0,0,60,12,1112,1,201],[426,698,100,24,24,91,40,2,25,234,186],[6772,947,108,639,291,24,529,139,592,180,0]],"unclassified_gt_nuclei_dropped":0,"notes":["PUMA challenge track 2 baseline, trained on fold 1 of an unpublished 5-fold split of these regions, so most regions are training data: a sanity check, not a held-out score.","Three-class view merges both annotated and predicted classes: tumor stays tumor, lymphocyte and plasma cell become lymphocyte, everything else becomes other."],"seconds":3714,"three_class":{"gt_classes":["lymphocyte","tumor","other","false_positive"],"pred_classes":["lymphocyte","tumor","other","missed"],"counts":[[18655,1117,1324,1065],[5136,44877,3846,3559],[3179,4045,9095,1527],[1055,6772,2394,0]]}}};  // filled in by scripts/confusion_matrices.py
+
+// rows: [label, ...values]; null = not reported; a row labelled "All nuclei" or "Mean" is drawn as a summary row
+// matrices: [button label, results key, optional view of that result]; cmModel names the evaluated checkpoint
+const MODELS = [
+  {
+    id: "lizard", name: "HoVer-NeXt Lizard",
+    files: "lizard_convnextv2_tiny, _base, _large", resolution: "0.5 micrometers per pixel (20x)",
+    classes: ["neutrophil", "epithelial", "lymphocyte", "plasma cell", "eosinophil", "connective", "mitosis"],
+    caption: "Large model, colon test images",
+    cols: ["F1 score", "Balanced accuracy", "Panoptic quality"], dp: [3, 3, 3],
+    rows: [
+      ["Neutrophil", 0.313, 0.627, 0.206],
+      ["Epithelial", 0.826, 0.796, 0.606],
+      ["Lymphocyte", 0.766, 0.858, 0.644],
+      ["Plasma cell", 0.471, 0.693, 0.386],
+      ["Eosinophil", 0.553, 0.785, 0.369],
+      ["Connective", 0.708, 0.794, 0.516],
+      ["Mitosis", 0.617, null, null],
+      ["All nuclei", 0.841, null, 0.546],
+    ],
+    notes: [
+      "Base and Tiny are within 0.05 of Large on most classes, but Tiny drops to 0.205 F1 on neutrophils.",
+      "Mitosis is scored on a separate mitosis test set, where Tiny does slightly better (0.620).",
+    ],
+  },
+  {
+    id: "pannuke", name: "HoVer-NeXt PanNuke",
+    files: "pannuke_convnextv2_tiny_1, _2, _3", resolution: "0.25 micrometers per pixel (40x)",
+    classes: ["neoplastic", "inflammatory", "connective", "dead", "epithelial"],
+    caption: "Tiny model, average over the 3 PanNuke data splits",
+    cols: ["F1 score", "Balanced accuracy", "Panoptic quality"], dp: [3, 3, 3],
+    rows: [
+      ["Neoplastic", 0.720, 0.764, 0.536],
+      ["Inflammatory", 0.681, 0.814, 0.418],
+      ["Connective", 0.646, 0.751, 0.415],
+      ["Dead", 0.492, 0.725, 0.154],
+      ["Epithelial", 0.728, 0.854, 0.515],
+      ["All nuclei", 0.826, null, 0.656],
+    ],
+    notes: [
+      "There is one model per PanNuke fold. Tiny 1 trains on fold 1 and Tiny 2 on fold 2, and both are tested on fold 3. Tiny 3 trains on fold 3 and is tested on fold 1.",
+      "Panoptic quality compares directly with the CellViT tab, which uses the same three folds.",
+    ],
+  },
+  {
+    id: "puma", name: "HoVer-NeXt PUMA",
+    files: "puma_convnextv2_base, puma10_convnextv2_base", resolution: "0.2263 micrometers per pixel (40x)",
+    classes: ["lymphocyte", "tumor", "other"],
+    caption: "Melanoma test images",
+    cols: ["F1 score, our model", "F1 score, two pathologists"], dp: [2, 2],
+    rows: [
+      ["Lymphocyte", 0.80, 0.83],
+      ["Tumor", 0.81, 0.89],
+      ["Other", 0.50, 0.76],
+      ["Mean", 0.70, 0.83],
+    ],
+    notes: [
+      "“Other” merges 8 annotated classes: plasma cell, histiocyte, melanophage, neutrophil, stroma, endothelium, epithelium and apoptosis.",
+      "A 10-class version in the same paper scores only 0.27 mean F1, and pathologists themselves agree poorly on the rare classes.",
+    ],
+    cmModel: "the ten-class model (puma10_convnextv2_base)",
+    matrices: [["Ten classes", "hovernext_puma10_base"], ["Merged to three classes", "hovernext_puma10_base", "three_class"]],
+  },
+  {
+    id: "cellvit", name: "CellViT",
+    files: "CellViT-256-x40-AMP.pth, CellViT-SAM-H-x40-AMP.pth", resolution: "0.25 micrometers per pixel (40x)",
+    classes: ["neoplastic", "inflammatory", "connective", "dead", "epithelial"],
+    caption: "CellViT-256, average over the 3 PanNuke data splits",
+    cols: ["Precision", "Recall", "F1 score", "Panoptic quality"], dp: [2, 2, 2, 3],
+    rows: [
+      ["Neoplastic", 0.69, 0.70, 0.69, 0.567],
+      ["Inflammatory", 0.59, 0.58, 0.58, 0.405],
+      ["Connective", 0.53, 0.51, 0.52, 0.405],
+      ["Dead", 0.39, 0.35, 0.37, 0.144],
+      ["Epithelial", 0.68, 0.71, 0.70, 0.559],
+      ["All nuclei", 0.83, 0.82, 0.82, 0.670],
+    ],
+    notes: [
+      "The paper's scores come from one model per fold, each tested on its held-out fold. Those per-fold models were not released.",
+      "The larger CellViT-SAM-H is within 0.03 of CellViT-256 on F1 score and panoptic quality for every class.",
+      "Its F1 score uses a different formula from the HoVer-NeXt paper's, so compare panoptic quality across tabs, not F1.",
+    ],
+    cmModel: "CellViT-256",
+    matrices: [["CellViT-256", "cellvit_256"]],
+  },
+];
+
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+const fmt = (v, dp) => v === null ? "—" : v.toFixed(dp);
+const LABELS = { false_positive: "False positive", missed: "Missed", plasma_cell: "Plasma cell" };
+const label = c => LABELS[c] ?? c.charAt(0).toUpperCase() + c.slice(1).replace(/_/g, " ");
+const SPLITS = { "all 206 training regions of interest": "the PUMA training set (every region of interest)", test: "the Lizard test split", fold1: "PanNuke fold 1", fold3: "PanNuke fold 3" };
+const state = {};  // per tab: chosen matrix index and whether counts are shown
+
+function renderTable(m) {
+  const head = m.cols.map(c => `<th scope="col">${esc(c)}</th>`).join("");
+  const body = m.rows.map(([label, ...vals]) => {
+    const total = label === "All nuclei" || label === "Mean";
+    const cells = vals.map((v, i) => `<td${v === null || total ? "" : ` style="background:color-mix(in oklab, var(--accent) ${Math.round(v * 30)}%, transparent)"`}>${fmt(v, m.dp[i])}</td>`).join("");
+    return `<tr${total ? ' class="total"' : ""}><th scope="row">${esc(label)}</th>${cells}</tr>`;
+  }).join("");
+  return `<div class="tbl-wrap"><table><thead><tr><th scope="col">${esc(m.caption)}</th>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
+}
+
+function matrixData(m) {
+  const [, key, view] = m.matrices[state[m.id].pick];
+  const r = RESULTS[key];
+  if (!r) return null;
+  const v = view ? r[view] : r;
+  return { r, view, gt: v.gt_classes, pred: v.pred_classes ?? r.pred_classes, counts: v.counts };
+}
+
+// cell shade: share of its row on one blue scale, linear so equal steps look equal
+const N_STEPS = 7;
+function shade(share) {
+  const k = Math.min(Math.floor(share * N_STEPS), N_STEPS - 1), t = Math.round((share * N_STEPS - k) * 100);
+  return `background:color-mix(in oklab, var(--s${k + 1}) ${t}%, var(--s${k}));${share >= 0.5 ? "color:var(--on-seq-hi);" : ""}`;
+}
+const RAMP_CSS = `linear-gradient(90deg, ${Array.from({ length: N_STEPS + 1 }, (_, i) => `var(--s${i})`).join(", ")})`;
+
+function renderMatrix(m) {
+  const d = matrixData(m), showCounts = state[m.id].counts;
+  if (!d) return `<p class="muted">Still running. This matrix appears in the next update of this page.</p>`;
+  const { r, gt, pred, counts } = d;
+  const nPred = pred.length - 1, nGt = gt.length - 1;
+  const head = pred.map((c, j) => `<th scope="col"${j === nPred ? ' class="gap-left err"' : ""}><span>${esc(label(c))}</span></th>`).join("") +
+    `<th scope="col" class="total"><span>Row total</span></th>`;
+  const body = gt.map((g, i) => {
+    const row = counts[i], total = row.reduce((a, b) => a + b, 0), fpRow = i === nGt;
+    const cells = row.map((n, j) => {
+      const gap = j === nPred ? "gap-left" : "";
+      if (fpRow && j === nPred) return `<td class="${gap}"></td>`;
+      const share = total ? n / total : 0;
+      const correct = !fpRow && j < nPred && label(g) === label(pred[j]);
+      const cls = [correct && "diag", gap, n === 0 && "zero"].filter(Boolean).join(" ");
+      const text = n === 0 ? "·" : showCounts ? n.toLocaleString("en-US") : share < 0.005 ? "<1" : (100 * share).toFixed(0);
+      return `<td${cls ? ` class="${cls}"` : ""} style="${n ? shade(share) : ""}" title="${esc(label(g))} → ${esc(label(pred[j]))}: ${n.toLocaleString("en-US")} of ${total.toLocaleString("en-US")} (${(100 * share).toFixed(1)}%)">${text}</td>`;
+    }).join("");
+    return `<tr${fpRow ? ' class="gap-top"' : ""}><th scope="row"${fpRow ? ' class="err"' : ""}>${esc(label(g))}</th>${cells}<td class="total">${total.toLocaleString("en-US")}</td></tr>`;
+  }).join("");
+
+  // headline: share of annotated nuclei detected, and of those, correctly classed
+  let found = 0, right = 0, annotated = 0;
+  counts.slice(0, nGt).forEach((row, i) => {
+    annotated += row.reduce((a, b) => a + b, 0);
+    found += row.slice(0, nPred).reduce((a, b) => a + b, 0);
+    row.slice(0, nPred).forEach((n, j) => { if (label(gt[i]) === label(pred[j])) right += n; });
+  });
+  const fp = counts[nGt].slice(0, nPred).reduce((a, b) => a + b, 0);
+  const pct = x => `${(100 * x).toFixed(0)}%`;
+  const split = SPLITS[r.split] ?? r.split;
+  const namesDiffer = !pred.slice(0, -1).every(p => gt.some(g => label(g) === label(p)));  // ten annotated classes against three predicted
+  const headline = `${pct(found / annotated)} of ${annotated.toLocaleString("en-US")} annotated nuclei were detected` +
+    (namesDiffer ? "" : `, and ${pct(right / found)} of those got the same class`) +
+    `. ${fp.toLocaleString("en-US")} predicted nuclei had no annotated match.`;
+  return `<p class="meta">${esc(r.images.toLocaleString("en-US"))} images from ${esc(split)} · match radius ${r.match_radius_px.toFixed(1)} pixels (3 micrometers) · ${r.test_time_views === 1 ? "no test-time augmentation" : `averaged over ${r.test_time_views} flipped and rotated views`}</p>
+    <p class="headline">${esc(headline)}</p>
+    <div class="tbl-wrap"><table class="matrix">
+      <thead><tr><th scope="col" class="corner"><div class="axis">Predicted →</div><div class="axis">Annotated ↓</div></th>${head}</tr></thead>
+      <tbody>${body}</tbody></table></div>
+    <div class="legend"><span>0%<i style="background:${RAMP_CSS};margin:0 6px"></i>100% of the row</span><span>${showCounts ? "Cells are nucleus counts; shade is still the share of the row." : "Cells are the percentage of each annotated class; hover for counts."}</span><span>Outlined, bold: correct class</span></div>
+    <ul class="notes">${r.notes.map(n => `<li>${esc(n)}</li>`).join("")}${r.unclassified_gt_nuclei_dropped ? `<li>${r.unclassified_gt_nuclei_dropped} annotated nuclei without a class label were left out.</li>` : ""}</ul>`;
+}
+
+function renderCm(m) {
+  const s = state[m.id];
+  const picks = m.matrices.length > 1 ? `<div class="seg" role="group" aria-label="Checkpoint">${m.matrices.map(([name], i) =>
+    `<button type="button" data-tab="${m.id}" data-pick="${i}" aria-pressed="${i === s.pick}">${esc(name)}</button>`).join("")}</div>` : "";
+  const mode = `<div class="seg" role="group" aria-label="Cell values">${[["Share of true class", false], ["Counts", true]].map(([name, c]) =>
+    `<button type="button" data-tab="${m.id}" data-counts="${c}" aria-pressed="${c === s.counts}">${name}</button>`).join("")}</div>`;
+  return `<h3>Confusion matrix of ${esc(m.cmModel)}, our evaluation</h3><div class="controls">${picks}${mode}</div><div id="cm-body-${m.id}">${renderMatrix(m)}</div>`;
+}
+
+function renderPanel(m) {
+  const chips = m.classes.map((c, k) => `<span class="chip"><i style="background:${COLORS[k]}"></i>${esc(c)}</span>`).join("");
+  return `<div class="panel">
+    <h2>${esc(m.name)}</h2>
+    <p class="meta">Checkpoints <span class="mono">${esc(m.files)}</span> · ${esc(m.resolution)}</p>
+    <div class="chips">${chips}</div>
+    ${renderTable(m)}
+    <ul class="notes">${m.notes.map(n => `<li>${esc(n)}</li>`).join("")}</ul>
+    ${m.matrices ? `<section class="cm" id="cm-${m.id}">${renderCm(m)}</section>` : ""}
+  </div>`;
+}
+
+const tabsEl = document.getElementById("tabs"), panelsEl = document.getElementById("panels");
+MODELS.forEach(m => {
+  state[m.id] = { pick: 0, counts: false };
+  tabsEl.insertAdjacentHTML("beforeend",
+    `<button class="tab" role="tab" id="tab-${m.id}" aria-controls="panel-${m.id}" aria-selected="false">${esc(m.name)}</button>`);
+  panelsEl.insertAdjacentHTML("beforeend",
+    `<div role="tabpanel" id="panel-${m.id}" aria-labelledby="tab-${m.id}" hidden>${renderPanel(m)}</div>`);
+});
+
+panelsEl.addEventListener("click", e => {
+  const b = e.target.closest(".seg button"); if (!b) return;
+  const m = MODELS.find(x => x.id === b.dataset.tab), s = state[m.id];
+  if (b.dataset.pick !== undefined) s.pick = +b.dataset.pick; else s.counts = b.dataset.counts === "true";
+  document.getElementById(`cm-${m.id}`).innerHTML = renderCm(m);
+  document.querySelector(`#cm-${m.id} .seg button[aria-pressed="true"]${b.dataset.pick !== undefined ? "[data-pick]" : "[data-counts]"}`).focus();
+});
+
+function select(id) {
+  MODELS.forEach(m => {
+    const on = m.id === id;
+    document.getElementById(`tab-${m.id}`).setAttribute("aria-selected", on);
+    document.getElementById(`tab-${m.id}`).tabIndex = on ? 0 : -1;
+    document.getElementById(`panel-${m.id}`).hidden = !on;
+  });
+  try { localStorage.setItem("tab", id); } catch {}
+}
+tabsEl.addEventListener("click", e => {
+  const b = e.target.closest(".tab"); if (b) { select(b.id.slice(4)); history.replaceState(null, "", "#" + b.id.slice(4)); }
+});
+tabsEl.addEventListener("keydown", e => {
+  const i = MODELS.findIndex(m => document.getElementById(`tab-${m.id}`) === document.activeElement);
+  if (i < 0 || !["ArrowLeft", "ArrowRight"].includes(e.key)) return;
+  const next = MODELS[(i + (e.key === "ArrowRight" ? 1 : MODELS.length - 1)) % MODELS.length].id;
+  select(next); document.getElementById(`tab-${next}`).focus();
+});
+let start = location.hash.slice(1);
+if (!MODELS.some(m => m.id === start)) { try { start = localStorage.getItem("tab"); } catch {} }
+select(MODELS.some(m => m.id === start) ? start : MODELS[0].id);
+</script>
