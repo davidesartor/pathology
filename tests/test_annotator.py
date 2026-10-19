@@ -51,7 +51,7 @@ def rois(tmp_path) -> str:
 
 
 def class_counts(page: Page) -> dict[str, int]:
-    labels = page.evaluate("[...$('layers').querySelectorAll('label')].map(label => [label.children[2].textContent, label.children[3].textContent])")
+    labels = page.evaluate("[...$('layers').querySelectorAll('label:has(input[type=checkbox])')].map(label => [label.children[2].textContent, label.children[3].textContent])")
     return {name: int(count.replace(",", "")) for name, count in labels}
 
 
@@ -280,3 +280,23 @@ def test_paint_and_erase_rois(annotator: Page, tiffs):
     assert len(areas()) == 2
     annotator.click("#roi-undo")  # touch screens have no Backspace
     assert len(areas()) == 1
+
+
+def test_class_colour_width_and_merge(annotator: Page, tiffs, nuclei):
+    """A class takes a new colour and width; merged into another, its nuclei count there, and a rename covers both."""
+    path, centres = nuclei
+    open_files(annotator, tiffs["ome_zlib"][0])
+    annotator.set_input_files("#files", path)
+    wait_for(annotator, "$('layers').querySelectorAll('label').length >= 2")
+    tumor = annotator.locator("#layers label", has_text="Tumor")
+    tumor.locator("input.swatch").evaluate("input => { input.value = '#00ff00'; input.dispatchEvent(new Event('input')); input.dispatchEvent(new Event('change')); }")
+    tumor.locator(".edit").click()
+    annotator.locator(".class-edit input[type=range]").fill("4")
+    assert annotator.evaluate("(({color, width}) => [color, width])(layers[0].classes.get('Tumor'))") == [[0, 255, 0], 4]
+
+    annotator.locator(".class-edit select").select_option("Lymphocyte")
+    assert class_counts(annotator) == {"Lymphocyte": sum(len(c) for c in centres.values())}
+    annotator.locator(".class-edit input[type=text]").fill("all nuclei")  # the editor stays open on the merged class
+    annotator.locator(".class-edit input[type=text]").press("Enter")
+    assert class_counts(annotator) == {"all nuclei": sum(len(c) for c in centres.values())}
+    assert sorted(annotator.evaluate("[...layers[0].renamed]")) == [["Lymphocyte", "all nuclei"], ["Tumor", "all nuclei"]]

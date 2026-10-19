@@ -24,7 +24,7 @@ def test_highlight_is_named_and_kept(viewer: Page, tiffs):
     viewer.evaluate("viewer.viewport.zoomTo(viewer.viewport.imageToViewportZoom(1), null, true)")
     corners = [(400, 200), (600, 200), (600, 350), (400, 350)]
     area = highlight(viewer, corners)
-    ring = np.array(area["ring"])
+    ring = np.array(area["rings"][0])
     assert ring.shape == (4, 2)
     assert np.allclose(np.diff(ring, axis=0), np.diff(corners, axis=0), atol=1)  # 1 slide px per screen px
     assert (area["number"], area["name"]) == (1, "Highlight 1")
@@ -78,3 +78,49 @@ def test_calibration_sets_magnification(viewer: Page, tiffs):
     viewer.click("#calibrate")
     viewer.click("#calibration button[value=default]")
     wait_for(viewer, "localStorage.getItem('screen-mm-per-device-px') === null")
+
+
+def test_paint_erase_and_merge_highlights(viewer: Page, tiffs):
+    """A brush stroke away from the highlights starts one, erasing across one splits it, merging joins two under the kept one's name, and undo steps back."""
+    open_files(viewer, tiffs["ome_zlib"][0])
+    viewer.evaluate("viewer.viewport.zoomTo(viewer.viewport.imageToViewportZoom(0.25), viewer.viewport.imageToViewportCoordinates(3300, 2000), true)")
+    viewer.click("#highlight")
+    viewer.click("#highlight-mode [data-value=paint]")
+    viewer.evaluate("changeBrush({size: 20})")  # 40 slide px across a radius at 0.25 screen px per slide px
+
+    def screen(x: float, y: float) -> tuple[float, float]:
+        return tuple(viewer.evaluate("([x, y]) => { const point = viewer.viewport.imageToViewerElementCoordinates(new OpenSeadragon.Point(x, y)), rect = viewer.container.getBoundingClientRect(); return [rect.left + point.x, rect.top + point.y]; }", [x, y]))
+
+    def stroke(*points: tuple[float, float]):
+        viewer.mouse.move(*screen(*points[0]))
+        viewer.mouse.down()
+        for point in points[1:]:
+            viewer.mouse.move(*screen(*point), steps=10)
+        viewer.mouse.up()
+
+    def areas() -> list[list[float]]:
+        return viewer.evaluate("slide.areas.map(area => area.rings.map(ringArea).sort((a, b) => a - b))")
+
+    stroke((2000, 2000), (3000, 2000))
+    stroke((2900, 2000), (2900, 2600))  # touches the first, so adds to it
+    stroke((4300, 1800), (4700, 1800), (4700, 2200), (4300, 2200), (4300, 1800))
+    capsule = 1000 * 80 + np.pi * 40 ** 2
+    first, loop = areas()
+    assert first == [pytest.approx(capsule + 560 * 80, rel=0.03)]
+    assert loop == [pytest.approx(320 ** 2, rel=0.03), pytest.approx(480 ** 2, rel=0.03)]  # the hole inside it, and its outline
+
+    viewer.click("#highlight-mode [data-value=erase]")
+    stroke((2500, 1800), (2500, 2200))
+    assert len(areas()[0]) == 2 and sum(areas()[0]) == pytest.approx(capsule + 560 * 80 - 80 * 80, rel=0.03)
+    viewer.keyboard.press("Backspace")
+    assert len(areas()[0]) == 1
+
+    viewer.locator("#areas .area button[title^='line width']").first.click()
+    viewer.locator("#areas .area-edit input[type=range]").fill("4")
+    assert viewer.evaluate("slide.areas[0].width") == 4
+    viewer.locator("#areas .area button[title^='line width']").nth(1).click()
+    viewer.locator("#areas .area-edit select").select_option(label="Highlight 1")
+    assert viewer.evaluate("slide.areas.map(area => area.name)") == ["Highlight 1"]
+    assert len(areas()[0]) == 3  # apart, the two keep their rings
+    viewer.click("#highlight-undo")  # touch screens have no Backspace
+    assert viewer.evaluate("slide.areas.map(area => [area.name, area.width])") == [["Highlight 1", 4], ["Highlight 2", 1.5]]

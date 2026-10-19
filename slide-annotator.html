@@ -104,6 +104,14 @@
   #side label input[type=checkbox] { margin: 0; }
   #side input[type=range] { flex: 1; }
   .swatch { flex: none; width: 12px; height: 12px; border-radius: 3px; }
+  input.swatch { width: 14px; height: 14px; padding: 0; border: none; background: none; cursor: pointer; }
+  input.swatch::-webkit-color-swatch-wrapper { padding: 0; }
+  input.swatch::-webkit-color-swatch { border: none; border-radius: 3px; }
+  #layers label .edit { flex: none; min-height: 20px; padding: 0 5px; margin-left: -4px; background: none; border: none; color: var(--faint); }
+  #layers label .edit.active { color: var(--fg); }
+  @media (hover: hover) { #layers label .edit:hover { color: var(--fg); background: var(--raised); } }
+  .class-edit { display: flex; flex-direction: column; gap: 6px; margin: 2px 0 8px 22px; padding: 8px; border: 1px solid var(--line); border-radius: 8px; font-size: 12px; color: var(--muted); }
+  .class-edit input[type=text] { min-height: 30px; padding: 4px 8px; background: var(--raised); border: 1px solid var(--line); border-radius: 7px; }
   #layers h4 { display: flex; align-items: center; gap: 2px; margin: 12px 0 4px; padding-top: 10px; border-top: 1px solid var(--line); font-size: 13px; font-weight: 500; }
   #layers h4 span { margin-right: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   #layers h4 button, .area button { min-height: 24px; padding: 0 6px; background: none; border: none; color: var(--faint); }
@@ -1838,13 +1846,76 @@ function clearNuclei(cls) {
   cls.levelCircles?.clear();
 }
 
-// polygons grouped by classification, as one Path2D per class (and per grid cell for nuclei) in slide px
+// polygons grouped by classification, as one Path2D per class (and per grid cell for nuclei) in slide px; a class renamed
+// or merged takes the features still arriving under its old names. `width` is its outline's width in screen px
 function layerClass(layer, name, color, detection) {
+  name = layer.renamed?.get(name) ?? name;
   if (!layer.classes.has(name)) layer.classes.set(name, {
-    name, color, detection, count: 0, visible: true, paths: new Map(), circles: new Map(),
+    name, color, detection, width: detection ? 1.5 : 3, aliases: new Set([name]), count: 0, visible: true, paths: new Map(), circles: new Map(),
     overview: detection ? newOverview(layer.slide, color) : null,
   });
   return layer.classes.get(name);
+}
+
+const toHex = color => `#${color.map(value => Math.round(value).toString(16).padStart(2, "0")).join("")}`;
+const fromHex = hex => [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16));
+
+// the dot map's dots repainted along with the class's colour
+function setClassColor(cls, color) {
+  cls.color = color;
+  if (!cls.overview) return;
+  const {canvas, context} = cls.overview;
+  context.globalCompositeOperation = "source-in";
+  context.fillStyle = `rgb(${color})`;
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.globalCompositeOperation = "source-over";
+}
+
+// a class's nuclei or outlines join another's, which keeps its own colour and width
+function mergeClass(target, source) {
+  target.count += source.count;
+  for (const [key, path] of source.paths) target.paths.has(key) ? target.paths.get(key).addPath(path) : target.paths.set(key, path);
+  for (const [key, cell] of source.circles) {
+    const into = target.circles.get(key);
+    if (!into) { target.circles.set(key, cell); continue; }
+    into.path.addPath(cell.path);
+    into.count += cell.count;
+  }
+  for (const [key, members] of source.members ?? []) {
+    const into = (target.members ??= new Map()).get(key);
+    if (!into) { target.members.set(key, members); continue; }
+    into.rings.push(...members.rings);
+    into.circles.push(...members.circles);
+    into.nuclei.push(...members.nuclei);
+  }
+  target.levelPaths?.clear();
+  target.levelCircles?.clear();
+  if (source.rings) target.rings = (target.rings ?? []).concat(source.rings);
+  if (source.centres) target.centres = (target.centres ?? []).concat(source.centres);
+  target.nuclei ??= source.nuclei;
+  if (target.overview) {
+    target.overview.context.drawImage(source.overview.canvas, 0, 0);
+    setClassColor(target, target.color);
+  }
+  for (const alias of source.aliases) target.aliases.add(alias);
+}
+
+// a class renamed, or merged into the class of the layer that already has the name
+function renameClass(layer, cls, name) {
+  const target = layer.classes.get(name);
+  if (name && name !== cls.name && !(target && (target.halo || target.detection !== cls.detection))) {
+    layer.renamed ??= new Map();
+    for (const alias of cls.aliases) layer.renamed.set(alias, name);
+    const entries = [...layer.classes].filter(([, other]) => !(target && other === cls)).map(([key, other]) => other === cls ? [name, cls] : [key, other]);
+    if (target) mergeClass(target, cls);
+    else cls.name = name;
+    layer.classes.clear();
+    for (const [key, other] of entries) layer.classes.set(key, other);
+    delete layer.inside;
+    if (editingClass === cls) editingClass = target ?? cls;
+  }
+  renderLayers();
+  draw();
 }
 
 function addPolygon(cls, polygon) {
@@ -2192,13 +2263,14 @@ function reviewNext(layer, halo) {
 
 // the nucleus being reviewed or clicked, which the class buttons (keys 1-9, 0 for not a nucleus) label
 let selected = null;  // {layer, i, halo}; halo when reviewing, so labelling moves on to the next one
+let editingClass = null;  // the class whose line width, name and merging show under it in the layers
 function select(layer, i, halo = null) {
   selected = layer ? {layer, i, halo} : null;
   renderLayers();
   $("layers").querySelector(".choices")?.scrollIntoView({block: "nearest"});
   draw();
 }
-const labelColor = (layer, label) => label === NOT_NUCLEUS ? NOT_NUCLEUS_COLOR : layer.classes.get(label)?.color ?? DEFAULT_COLOR;
+const labelColor = (layer, label) => label === NOT_NUCLEUS ? NOT_NUCLEUS_COLOR : [...layer.classes.values()].find(cls => cls.aliases.has(label))?.color ?? DEFAULT_COLOR;
 function labelNucleus(label) {
   const {layer, i, halo} = selected;
   (layer.labels ??= new Map()).set(i, label);
@@ -2304,13 +2376,20 @@ function renderLayers() {
     const {counts, inROI} = insideCounts(layer);
     for (const cls of [...layer.classes.values()].sort((a, b) => !!a.halo - !!b.halo)) {
       const label = document.createElement("label");
-      label.innerHTML = `<input type="checkbox"><span class="swatch" style="background: rgb(${cls.color})"></span><span></span><span class="count">${(counts.get(cls) ?? cls.count).toLocaleString()}</span>`;
-      const checkbox = label.firstChild;
+      label.innerHTML = `<input type="checkbox"><input type="color" class="swatch" title="colour of this class"><span></span><span class="count">${(counts.get(cls) ?? cls.count).toLocaleString()}</span><button class="edit" title="line width, name, and merging into another class">⋯</button>`;
+      const [checkbox, color, name, count, edit] = label.children;
       checkbox.checked = cls.visible;
       checkbox.addEventListener("change", () => { cls.visible = checkbox.checked; if (!cls.detection) renderLayers(); draw(); });
-      label.children[2].textContent = cls.name;
-      if (inROI && counts.has(cls)) label.children[3].title = `inside the ROIs shown, of ${cls.count.toLocaleString()} in all`;
+      color.value = toHex(cls.color);
+      color.addEventListener("input", () => { setClassColor(cls, fromHex(color.value)); draw(); });
+      color.addEventListener("change", renderLayers);
+      name.textContent = cls.name;
+      if (inROI && counts.has(cls)) count.title = `inside the ROIs shown, of ${cls.count.toLocaleString()} in all`;
+      edit.hidden = layer.running || layer.queued;
+      edit.classList.toggle("active", editingClass === cls);
+      edit.addEventListener("click", event => { event.preventDefault(); editingClass = editingClass === cls ? null : cls; renderLayers(); });
       $("layers").append(label);
+      if (editingClass === cls && !edit.hidden) $("layers").append(classEditor(layer, cls));
       if (cls.halo && MANUAL_REVIEW) $("layers").append(reviewButton(layer, cls));
     }
     if (selected?.layer === layer) $("layers").append(...labelChoices(layer, selected.i));
@@ -2327,6 +2406,33 @@ function renderLayers() {
   }
   $("drop-hint").hidden = layers.length > 0;
   $("save-roi").disabled = !layers.some(layer => layer.drawn?.length);
+}
+
+// a class's line width, and unless it is drawn or the uncertainty rings, its name and the class to merge it into
+function classEditor(layer, cls) {
+  const editor = document.createElement("div");
+  editor.className = "class-edit";
+  editor.innerHTML = `<label title="the outlines' width on screen">width <input type="range" min="0.5" max="6" step="0.5"><span class="count"></span></label>`;
+  const width = editor.querySelector("input"), widthValue = editor.querySelector(".count");
+  const showWidth = () => { width.value = cls.width; widthValue.textContent = `${cls.width} px`; };
+  width.addEventListener("input", () => { cls.width = Number(width.value); showWidth(); draw(); });
+  showWidth();
+  if (cls.halo || layer.drawn) return editor;
+
+  const name = Object.assign(document.createElement("input"), {type: "text", value: cls.name, spellcheck: false, title: "rename the class; the name of another class merges the two"});
+  name.addEventListener("change", () => renameClass(layer, cls, name.value.trim()));
+  name.addEventListener("keydown", event => {
+    if (event.key === "Escape") name.value = cls.name;
+    if (event.key === "Enter" || event.key === "Escape") name.blur();
+  });
+  const others = [...layer.classes.values()].filter(other => other !== cls && !other.halo && other.detection === cls.detection);
+  const merge = document.createElement("select");
+  merge.title = "join this class's nuclei to another class, which keeps its name and colour";
+  merge.append(new Option("Merge into…", ""), ...others.map(other => new Option(other.name, other.name)));
+  merge.disabled = !others.length;
+  merge.addEventListener("change", () => renameClass(layer, cls, merge.value));
+  editor.append(name, merge);
+  return editor;
 }
 
 // file pickers: one layer per picked file, one layer per picked folder (watched where the browser gives folder handles)
@@ -2434,12 +2540,13 @@ function drawnLayer() {
 }
 
 function rebuildDrawn(layer) {
-  const visible = new Map([...layer.classes].map(([name, cls]) => [name, cls.visible]));
+  const before = new Map(layer.classes);
   layer.classes.clear();
   const depths = ringDepths(layer.drawn);
   for (const [i, ring] of layer.drawn.entries()) {
     const cls = depths[i] % 2 ? layerClass(layer, "Exclusion", EXCLUSION_COLOR, false) : layerClass(layer, "ROI", DRAWN_COLOR, false);
-    cls.visible = visible.get(cls.name) ?? true;
+    const {visible = true, color = cls.color, width = cls.width} = before.get(cls.name) ?? {};
+    Object.assign(cls, {visible, color, width});
     cls.count++;
     addPolygon(cls, [ring]);
   }
@@ -3552,7 +3659,7 @@ function drawLayers(target, layerList, scale, topLeft, bottomRight) {
       continue;
     }
     nucleiCtx.strokeStyle = `rgb(${cls.color})`;
-    nucleiCtx.lineWidth = 1.5 / scale;
+    nucleiCtx.lineWidth = cls.width / scale;
     const temperature = Number($("temperature").value);
     if (!temperature || !cls.members) {
       for (const path of visiblePaths(cls, topLeft, bottomRight, nucleiTooSmall)) nucleiCtx.stroke(path);
@@ -3565,10 +3672,10 @@ function drawLayers(target, layerList, scale, topLeft, bottomRight) {
   if (rings.length) composeNuclei(target, nucleiCtx, rings, depths);
   for (const cls of sorted.filter(cls => !cls.detection)) {
     ctx.strokeStyle = "rgba(0, 0, 0, 0.7)";
-    ctx.lineWidth = 6 / scale;
+    ctx.lineWidth = (cls.width + 3) / scale;
     for (const path of cls.paths.values()) ctx.stroke(path);
     ctx.strokeStyle = `rgb(${cls.color})`;
-    ctx.lineWidth = 3 / scale;
+    ctx.lineWidth = cls.width / scale;
     for (const path of cls.paths.values()) ctx.stroke(path);
   }
   if (!nucleiTooSmall) {
