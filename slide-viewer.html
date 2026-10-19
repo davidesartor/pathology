@@ -1375,7 +1375,7 @@ function createPane(index) {
   part("link").addEventListener("click", () => setLinked(!linked, pane));
   part("open-slide").addEventListener("click", () => { activePane = pane; $("slide-file").click(); });
   part("open-slide-folder").addEventListener("click", () => { activePane = pane; openFolder(); });
-  // iPad browsers can pick several files but not a folder
+  // hide folder picking only in browsers with no folder picker at all (iPad and iPhone Safari have webkitdirectory)
   if (!window.showDirectoryPicker && !("webkitdirectory" in $("slide-folder"))) part("open-slide-folder").hidden = true;
 
   // rotation and mirroring are view only; OSD's r, R and f keys change them too

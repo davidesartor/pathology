@@ -1728,7 +1728,7 @@ $("slide-file").addEventListener("change", () => {
   $("slide-file").value = "";
   addSlideFiles(files);
 });
-// iPad browsers can pick several files but not a folder
+// hide folder picking only in browsers with no folder picker at all (iPad and iPhone Safari have webkitdirectory)
 if (!window.showDirectoryPicker && !("webkitdirectory" in $("folder"))) $("open-slide-folder").hidden = $("add-folder").hidden = true;
 $("open-slide-folder").addEventListener("click", async () => {
   if (!window.showDirectoryPicker) return $("slide-folder").click();
