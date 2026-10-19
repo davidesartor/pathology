@@ -69,6 +69,7 @@
   #hint { bottom: 76px; left: 50%; transform: translateX(-50%); margin: 0; padding: 4px 12px; white-space: nowrap; }
   #tools { top: 50%; left: 12px; transform: translateY(-50%); display: flex; flex-direction: column; gap: 2px; padding: 4px; }
   #tools button { display: grid; justify-items: center; gap: 2px; width: 54px; min-height: 0; padding: 7px 0 5px; background: none; border-color: transparent; color: var(--muted); font-size: 10.5px; }
+  #tools .sep { height: 1px; margin: 2px 6px; background: var(--line); }
   @media (hover: hover) { #tools button:hover { color: var(--fg); background: var(--raised); } }
   #tools button.active { color: var(--accent-fg); background: var(--accent-soft); border-color: var(--accent); }
   #scope { bottom: 14px; left: 50%; transform: translateX(-50%); width: max-content; max-width: calc(100% - 150px); display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 6px 12px; padding: 6px 10px; }
@@ -132,8 +133,8 @@
   #metadata td { padding: 1px 0; vertical-align: top; overflow-wrap: anywhere; }
   #metadata td:first-child { padding-right: 10px; color: var(--muted); white-space: nowrap; }
 
-  /* popovers from the sidebar's head */
-  .pop { position: fixed; top: 8px; right: calc(var(--side) + 8px); z-index: 6; width: 300px; max-width: calc(100% - 32px); box-sizing: border-box; padding: 14px 16px; }
+  /* popovers from the tools and microscope bars, placed beside their button */
+  .pop { position: fixed; z-index: 6; width: 300px; max-width: calc(100% - 16px); max-height: calc(100% - 16px); overflow: auto; box-sizing: border-box; padding: 14px 16px; }
   .pop h2 { margin: 0 0 4px; font-size: 14px; }
   .pop .note { margin: 0 0 12px; }
   .pop .field { margin-top: 12px; }
@@ -167,7 +168,6 @@
     #side { top: 8px; right: 8px; bottom: auto; width: auto; max-height: calc(100% - 16px); background: var(--glass); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 8px 28px rgba(0, 0, 0, 0.38); }
     body.side-collapsed #side-head { gap: 2px; padding: 4px; }
     body:not(.side-collapsed) #side { top: auto; left: 0; right: 0; bottom: 0; max-height: 60%; background: var(--panel); border-width: 1px 0 0; border-radius: 14px 14px 0 0; box-shadow: 0 -8px 28px rgba(0, 0, 0, 0.45); }
-    .pop { top: 8px; left: 8px; right: 60px; width: auto; max-width: 340px; max-height: calc(100% - 16px); overflow: auto; }
     #slidebar { left: 8px; top: 8px; max-width: calc(100% - 72px); flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
     #compare, #status, #rotation, #rotation-value, #scope .sep, .navigator { display: none !important; }
     #tools { left: 8px; }
@@ -216,6 +216,8 @@
     <button id="draw-roi" title="draw regions on this slide"><svg class="ico" viewBox="0 0 20 20"><path d="M4 6.5 9.5 3l6.5 3 1 7-6 4-7-3z"/><circle cx="4" cy="6.5" r="1.3" fill="currentColor"/><circle cx="16" cy="6" r="1.3" fill="currentColor"/></svg>ROI</button>
     <button id="measure" title="draw straight lines labelled with their length; captures show them"><svg class="ico" viewBox="0 0 20 20"><path d="M3 14 14 3l3 3L6 17z"/><path d="M6.5 10.5 8 12M9 8l1.5 1.5M11.5 5.5 13 7"/></svg>Measure</button>
     <button id="capture" title="frame part of the slide and save it as a full-resolution PNG, turned and mirrored as on screen, with the layers shown"><svg class="ico" viewBox="0 0 20 20"><path d="M3 7V3h4M13 3h4v4M17 13v4h-4M7 17H3v-4"/><circle cx="10" cy="10" r="2.6"/></svg>Capture</button>
+    <div class="sep"></div>
+    <button id="open-help" data-pop="help" title="how to move around, and the keys"><svg class="ico" viewBox="0 0 20 20"><circle cx="10" cy="10" r="7.5"/><path d="M7.8 7.8a2.3 2.3 0 1 1 3 2.2c-.6.2-.8.7-.8 1.3v.4"/><circle cx="10" cy="14.2" r=".6" fill="currentColor"/></svg>Help</button>
   </div>
   <div id="scope" class="hud box" hidden>
     <div class="seg" id="zoom" data-tip="Objective magnification" data-tip-detail="zoom as through a microscope objective of this power: the slide on screen, seen from 25 cm, looks as big as through the eyepiece. With the microscope field on, the circle shows that objective's field">
@@ -229,6 +231,7 @@
       <span id="rotation-value" class="count">0°</span>
       <button id="flip" class="icon" data-tip="Mirror" data-tip-detail="mirrors the view left to right"><svg class="ico" viewBox="0 0 20 20"><path d="M10 2v16M7 5 3 10l4 5zM13 5l4 5-4 5z"/></svg></button>
       <button id="field" class="icon" data-tip="Microscope field" data-tip-detail="dims the view outside a circle, as seen through the eyepiece; the magnifications then count how much of the slide the circle shows"><svg class="ico" viewBox="0 0 20 20"><circle cx="10" cy="10" r="7"/><circle cx="10" cy="10" r="1.6" fill="currentColor"/></svg></button>
+      <button id="open-settings" class="icon" data-pop="settings" data-tip="Microscope and screen" data-tip-detail="eyepiece, field number and screen calibration"><svg class="ico" viewBox="0 0 20 20"><circle cx="10" cy="10" r="2.8"/><path d="M10 2v2.4M10 15.6V18M2 10h2.4M15.6 10H18M4.3 4.3 6 6M14 14l1.7 1.7M4.3 15.7 6 14M14 6l1.7-1.7"/></svg></button>
     </div>
     <div id="info" hidden>
       <div id="scale"><div id="scale-bar"></div><span id="scale-label"></span></div>
@@ -240,8 +243,6 @@
   <div id="side-head">
     <button id="toggle-side" class="icon" data-tip="Hide layers"><svg class="ico" viewBox="0 0 20 20"><path d="m10 3 7 4-7 4-7-4z"/><path d="m3 10.5 7 4 7-4"/><path d="m3 14 7 4 7-4"/></svg></button>
     <h2>Layers</h2>
-    <button id="open-settings" class="icon" data-tip="Settings" data-tip-detail="eyepiece, field number and screen calibration"><svg class="ico" viewBox="0 0 20 20"><circle cx="10" cy="10" r="2.8"/><path d="M10 2v2.4M10 15.6V18M2 10h2.4M15.6 10H18M4.3 4.3 6 6M14 14l1.7 1.7M4.3 15.7 6 14M14 6l1.7-1.7"/></svg></button>
-    <button id="open-help" class="icon" data-tip="Help" data-tip-detail="how to move around"><svg class="ico" viewBox="0 0 20 20"><circle cx="10" cy="10" r="7.5"/><path d="M7.8 7.8a2.3 2.3 0 1 1 3 2.2c-.6.2-.8.7-.8 1.3v.4"/><circle cx="10" cy="14.2" r=".6" fill="currentColor"/></svg></button>
     <button id="fold-side" class="icon" data-tip="Hide layers"><svg class="ico" viewBox="0 0 20 20"><path d="m8 5 5 5-5 5"/></svg></button>
   </div>
   <div id="side-scroll">
@@ -2578,18 +2579,33 @@ document.addEventListener("pointerup", event => {
   if (event.pointerType === "touch" && tipFor) tipTimer = setTimeout(hideTip, 1500);
 });
 
-// the settings and help popovers: one open at a time, closed by a click elsewhere or Esc
-const popovers = [["open-settings", "settings"], ["open-help", "help"]];
-const closePopovers = () => { for (const [button, popover] of popovers) { $(popover).hidden = true; $(button).classList.remove("active"); } };
-for (const [button, popover] of popovers) {
-  $(button).addEventListener("click", () => {
-    const open = $(popover).hidden;
-    closePopovers();
-    $(popover).hidden = !open;
-    $(button).classList.toggle("active", open);
-  });
+// the settings and help popovers: one open at a time, beside the button that opened it, closed by a click elsewhere or Esc
+const closePopovers = () => {
+  for (const popover of document.querySelectorAll(".pop")) popover.hidden = true;
+  for (const button of document.querySelectorAll("[data-pop]")) button.classList.remove("active");
+};
+function placePopover(popover, button) {
+  const bar = button.closest(".hud").getBoundingClientRect(), anchor = button.getBoundingClientRect();
+  const clamp = (value, size, room) => Math.max(8, Math.min(value, room - size - 8));
+  if (bar.height > bar.width) {  // a vertical bar: to its right, level with the button
+    popover.style.left = `${bar.right + 8}px`;
+    popover.style.top = `${clamp(anchor.top, popover.offsetHeight, innerHeight)}px`;
+  } else {  // a horizontal bar: above it, centred on the button
+    popover.style.left = `${clamp(anchor.left + anchor.width / 2 - popover.offsetWidth / 2, popover.offsetWidth, innerWidth)}px`;
+    popover.style.top = `${Math.max(8, bar.top - 8 - popover.offsetHeight)}px`;
+  }
 }
-document.addEventListener("pointerdown", event => { if (!event.target.closest(".pop, #open-settings, #open-help, dialog")) closePopovers(); });
+document.addEventListener("click", event => {
+  const button = event.target.closest("[data-pop]");
+  if (!button) return;
+  const popover = $(button.dataset.pop), open = popover.hidden;
+  closePopovers();
+  if (!open) return;
+  popover.hidden = false;
+  button.classList.add("active");
+  placePopover(popover, button);
+});
+document.addEventListener("pointerdown", event => { if (!event.target.closest(".pop, [data-pop], dialog")) closePopovers(); });
 window.addEventListener("keydown", event => { if (event.key === "Escape") closePopovers(); });
 
 // one tool at a time on the main pane: drawing ROIs, measuring or capturing
