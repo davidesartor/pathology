@@ -212,3 +212,32 @@ def test_zoomed_out_nuclei_cover_their_outlines(annotator: Page, tiffs, tmp_path
     diameter = 200 * 0.3  # 60 screen px
     assert abs((xs.max() - xs.min() + 1) - diameter) <= 3 and abs((ys.max() - ys.min() + 1) - diameter) <= 3, (xs.min(), xs.max(), ys.min(), ys.max())
     assert abs(xs.mean() - 50) <= 1 and abs(ys.mean() - 50) <= 1  # centred on the rectangle
+
+
+@pytest.mark.parametrize("scale", [2, 0.3])
+def test_opacity_shows_class_confidence(annotator: Page, tiffs, tmp_path, scale):
+    """At temperature 0 nuclei are opaque, as without logits; above it, a nucleus near chance fades to LEAST_OPACITY, outline or dot."""
+    nuclei = [((1900, 1500), [10, 0]), ((2100, 1500), [0.1, 0])]
+    path = tmp_path / "nuclei.geojson"
+    path.write_text(feature_collection([{"type": "Feature", "geometry": {"type": "Polygon", "coordinates": [ring(x - 10, y - 10, x + 10, y + 10)]},
+                                         "properties": {"objectType": "detection", "classification": {"name": "Tumor", "color": [255, 0, 0]},
+                                                        "measurements": {"logit(Tumor)": tumor, "logit(Stroma)": stroma}}}
+                                        for (x, y), (tumor, stroma) in nuclei]))
+    open_files(annotator, tiffs["ome_zlib"][0])
+    annotator.set_input_files("#files", str(path))
+    wait_for(annotator, "$('layers').querySelectorAll('label').length >= 1")
+    annotator.evaluate(f"viewer.viewport.zoomTo(viewer.viewport.imageToViewportZoom({scale}), null, true)")
+    annotator.evaluate("viewer.viewport.panTo(viewer.viewport.imageToViewportCoordinates(2000, 1500), true)")
+
+    def opacity(temperature: float) -> list[int]:
+        annotator.evaluate(f"$('temperature').value = {temperature}; $('temperature').dispatchEvent(new Event('input'))")
+        wait_for(annotator, "!dotsPending")
+        return annotator.evaluate("""[1900, 2100].map(x => {
+            const {x: sx, y: sy} = toScreen(viewer, x, 1500), dpr = window.devicePixelRatio || 1;
+            const data = panes[0].ctx.getImageData(Math.round(sx * dpr) - 30, Math.round(sy * dpr) - 30, 61, 61).data;
+            return Math.max(...data.filter((_, i) => i % 4 === 3));
+        })""")
+
+    assert all(alpha > 200 for alpha in opacity(0))
+    confident, uncertain = opacity(1)
+    assert confident > 200 and 20 < uncertain < 60, (confident, uncertain)  # LEAST_OPACITY 0.15 ≈ 38
