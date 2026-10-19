@@ -1202,33 +1202,65 @@ window.addEventListener("hashchange", openSlide);
 
 // a TIFF on this computer, read in place: each screen tile is decoded from the finest stored level no finer than it needs.
 // Reduced levels come from OME-TIFF SubIFDs or from further images of the same shape; without them, zoomed-out views are slow
-// geotiff.js's LZW decoder has a 4093-entry table, but TIFF LZW codes reach 4094 and it then loops forever
+// geotiff.js's LZW decoder has a 4093-entry table, but TIFF LZW codes reach 4094 and it then loops forever.
+// Each code's string is a run already written to the output, so it is copied from there rather than walked back through a prefix chain
+function decodeLZW(buffer) {
+  const input = new Uint8Array(buffer);
+  const start = new Int32Array(4096), length = new Uint16Array(4096).fill(1, 0, 256);
+  let out = new Uint8Array(input.length * 4), size = 0;
+  let bit = 0, width = 9, next = 258, previous = -1;
+  while (bit + width <= input.length * 8) {
+    const byte = bit >> 3;
+    const code = ((input[byte] << 16 | input[byte + 1] << 8 | input[byte + 2]) >>> (24 - width - (bit & 7))) & ((1 << width) - 1);
+    bit += width;
+    if (code === 257) break;
+    if (code === 256) { width = 9; next = 258; previous = -1; continue; }
+    const known = code < next;
+    if (!known && previous < 0) break;
+    const entryLength = known ? length[code] : length[previous] + 1;  // unknown code = previous string + its own first byte
+    if (size + entryLength > out.length) { const grown = new Uint8Array(out.length * 2); grown.set(out); out = grown; }
+    if (code < 256) out[size] = code;
+    else {
+      const [from, copied] = known ? [start[code], entryLength] : [size - length[previous], entryLength - 1];
+      for (let i = 0; i < copied; i++) out[size + i] = out[from + i];
+      if (!known) out[size + entryLength - 1] = out[size];
+    }
+    if (previous >= 0 && next < 4096) {
+      start[next] = size - length[previous];
+      length[next++] = length[previous] + 1;
+    }
+    if (next + 1 >= 1 << width && width < 12) width++;
+    size += entryLength;
+    previous = code;
+  }
+  return out.slice(0, size).buffer;
+}
+// LZW tiles are decoded on a few workers, in parallel and without stalling the page; the page decodes them itself if workers fail
+const lzwWorkers = (() => {
+  try {
+    const code = `${decodeLZW}\nonmessage = ({data: {id, buffer}}) => { try { const out = decodeLZW(buffer); postMessage({id, out}, [out]); } catch (error) { postMessage({id, error: String(error)}); } };`;
+    const url = URL.createObjectURL(new Blob([code], {type: "text/javascript"}));
+    return Array.from({length: Math.min(4, navigator.hardwareConcurrency || 2)}, () => {
+      const worker = Object.assign(new Worker(url), {jobs: new Map()});
+      worker.onmessage = ({data: {id, out, error}}) => {
+        const {resolve, reject} = worker.jobs.get(id);
+        worker.jobs.delete(id);
+        error ? reject(new Error(error)) : resolve(out);
+      };
+      return worker;
+    });
+  } catch { return []; }
+})();
+let lzwJobs = 0;
 class LZWDecoder extends GeoTIFF.BaseDecoder {
   decodeBlock(buffer) {
-    const input = new Uint8Array(buffer);
-    const [prefix, suffix, length] = [new Uint16Array(4096), new Uint8Array(4096), new Uint16Array(4096)];
-    for (let code = 0; code < 256; code++) [suffix[code], length[code]] = [code, 1];
-    let [out, size] = [new Uint8Array(input.length * 4), 0];
-    let [bit, width, next, previous] = [0, 9, 258, -1];
-    while (bit + width <= input.length * 8) {
-      const byte = bit >> 3;
-      const code = ((input[byte] << 16 | input[byte + 1] << 8 | input[byte + 2]) >>> (24 - width - (bit & 7))) & ((1 << width) - 1);
-      bit += width;
-      if (code === 257) break;
-      if (code === 256) { [width, next, previous] = [9, 258, -1]; continue; }
-      const known = code < next;
-      const entry = known ? code : previous;  // unknown code = previous string + its own first byte
-      if (entry < 0) break;
-      const entryLength = length[entry] + (known ? 0 : 1);
-      if (size + entryLength > out.length) { const grown = new Uint8Array(out.length * 2); grown.set(out); out = grown; }
-      for (let i = length[entry] - 1, c = entry; i >= 0; i--, c = prefix[c]) out[size + i] = suffix[c];
-      if (!known) out[size + entryLength - 1] = out[size];
-      if (previous >= 0 && next < 4096) [prefix[next], suffix[next], length[next], next] = [previous, out[size], length[previous] + 1, next + 1];
-      if (next + 1 >= 1 << width && width < 12) width++;
-      size += entryLength;
-      previous = code;
-    }
-    return out.slice(0, size).buffer;
+    if (!lzwWorkers.length) return decodeLZW(buffer);
+    const worker = lzwWorkers.reduce((least, worker) => worker.jobs.size < least.jobs.size ? worker : least);
+    const id = ++lzwJobs;
+    return new Promise((resolve, reject) => {
+      worker.jobs.set(id, {resolve, reject});
+      worker.postMessage({id, buffer});
+    });
   }
 }
 GeoTIFF.addDecoder(5, async () => LZWDecoder);
@@ -1260,6 +1292,55 @@ const tileRGBA = (rgb, width, height) => {
   return new ImageData(rgba, width, height);
 };
 
+// a stored level's pixels in [left, right) x [top, bottom) as RGBA. 8-bit interleaved tiles are decoded and copied in directly:
+// readRasters reads every sample through a DataView call, a third of the time spent on a tile.
+// Screen tiles rarely line up with stored ones, so neighbours share stored tiles: the last ones decoded are kept
+const DECODED_TILES = 48;  // ~0.8 MB each for 512 px RGB
+const decodedTiles = new Map();
+let imageCount = 0;
+function decodedTile(image, tx, ty, decoder) {
+  const key = `${image.key ??= ++imageCount}/${tx}/${ty}`;
+  let tile = decodedTiles.get(key);
+  decodedTiles.delete(key);
+  tile ??= image.getTileOrStrip(tx, ty, 0, decoder).then(({data}) => new Uint8Array(data));
+  tile.catch(() => decodedTiles.delete(key));
+  decodedTiles.set(key, tile);
+  if (decodedTiles.size > DECODED_TILES) decodedTiles.delete(decodedTiles.keys().next().value);
+  return tile;
+}
+async function readRGBA(image, left, top, right, bottom) {
+  const directory = image.fileDirectory;
+  const samples = image.getSamplesPerPixel();
+  const bytes = [...Array(samples).keys()].every(sample => image.getBitsPerSample(sample) === 8 && image.getSampleFormat(sample) === 1);
+  if (!image.isTiled || image.planarConfiguration !== 1 || samples < 3 || !bytes)
+    return tileRGBA(await image.readRasters({window: [left, top, right, bottom], samples: [0, 1, 2], interleave: true}), right - left, bottom - top);
+  const [tileWidth, tileHeight] = [image.getTileWidth(), image.getTileHeight()];
+  image.decoder ??= GeoTIFF.getDecoder(directory.getValue("Compression") ?? 1, {
+    tileWidth, tileHeight, planarConfiguration: 1, bitsPerSample: directory.getValue("BitsPerSample"),
+    predictor: directory.getValue("Predictor") ?? 1, JPEGTables: directory.getValue("JPEGTables"), samplesPerPixel: samples,
+  });
+  const decoder = await image.decoder;
+  const [width, height] = [right - left, bottom - top];
+  const rgba = new Uint8ClampedArray(width * height * 4);
+  const reads = [];
+  for (let ty = Math.floor(top / tileHeight); ty * tileHeight < bottom; ty++)
+    for (let tx = Math.floor(left / tileWidth); tx * tileWidth < right; tx++)
+      reads.push(decodedTile(image, tx, ty, decoder).then(tile => {
+        const [x0, x1] = [Math.max(left, tx * tileWidth), Math.min(right, (tx + 1) * tileWidth)];
+        for (let y = Math.max(top, ty * tileHeight); y < Math.min(bottom, (ty + 1) * tileHeight); y++) {
+          let from = ((y - ty * tileHeight) * tileWidth + x0 - tx * tileWidth) * samples, to = ((y - top) * width + x0 - left) * 4;
+          for (let x = x0; x < x1; x++, from += samples, to += 4) {
+            rgba[to] = tile[from];
+            rgba[to + 1] = tile[from + 1];
+            rgba[to + 2] = tile[from + 2];
+            rgba[to + 3] = 255;
+          }
+        }
+      }));
+  await Promise.all(reads);
+  return new ImageData(rgba, width, height);
+}
+
 // zoomed-out tiles each need many stored tiles of a small level; re-reading and decoding them per screen tile stalls WebKit.
 // Such a level is decoded once into a bitmap instead, kept for the last two slides shown (side-by-side compare)
 const overviewBitmaps = [];
@@ -1267,7 +1348,7 @@ function overviewBitmap(image) {
   let entry = overviewBitmaps.find(entry => entry.image === image);
   if (!entry) {
     const [width, height] = [image.getWidth(), image.getHeight()];
-    entry = {image, bitmap: image.readRasters({samples: [0, 1, 2], interleave: true}).then(rgb => createImageBitmap(tileRGBA(rgb, width, height)))};
+    entry = {image, bitmap: readRGBA(image, 0, 0, width, height).then(pixels => createImageBitmap(pixels))};
     entry.bitmap.catch(() => overviewBitmaps.splice(overviewBitmaps.indexOf(entry), 1));
     overviewBitmaps.unshift(entry);
     overviewBitmaps.splice(2).forEach(({bitmap}) => bitmap.then(bitmap => bitmap.close(), () => {}));
@@ -1338,11 +1419,14 @@ async function openTIFF(file) {
         context.drawImage(await overviewBitmap(image), x0 / stored, y0 / stored, (x1 - x0) / stored, (y1 - y0) / stored, 0, 0, tileWidth, tileHeight);
         return job.finish(canvas.transferToImageBitmap());
       }
-      const rgb = await image.readRasters({
-        window: [left, top, right, bottom], width: tileWidth, height: tileHeight,
-        samples: [0, 1, 2], interleave: true, resampleMethod: "bilinear",
-      });
-      job.finish(await createImageBitmap(tileRGBA(rgb, tileWidth, tileHeight)));
+      const bitmap = await createImageBitmap(await readRGBA(image, left, top, right, bottom));
+      if (right - left === tileWidth && bottom - top === tileHeight) return job.finish(bitmap);
+      // between stored levels the read is scaled down on the canvas, which is faster than geotiff.js's resampling
+      const canvas = new OffscreenCanvas(tileWidth, tileHeight), context = canvas.getContext("2d");
+      context.imageSmoothingQuality = "high";
+      context.drawImage(bitmap, 0, 0, tileWidth, tileHeight);
+      bitmap.close();
+      job.finish(canvas.transferToImageBitmap());
     } catch (error) {
       job.finish(null, null, error.message);
     }
@@ -1355,8 +1439,7 @@ async function openTIFF(file) {
     const [left, top] = [Math.floor(x0 / stored), Math.floor(y0 / stored)];
     const right = Math.max(left + 1, Math.min(image.getWidth(), Math.ceil(x1 / stored)));
     const bottom = Math.max(top + 1, Math.min(image.getHeight(), Math.ceil(y1 / stored)));
-    const rgb = await image.readRasters({window: [left, top, right, bottom], samples: [0, 1, 2], interleave: true});
-    const bitmap = await createImageBitmap(tileRGBA(rgb, right - left, bottom - top));
+    const bitmap = await createImageBitmap(await readRGBA(image, left, top, right, bottom));
     context.drawImage(bitmap, (left * stored - x0) / scale, (top * stored - y0) / scale, (right - left) * stored / scale, (bottom - top) * stored / scale);
     bitmap.close();
   }
