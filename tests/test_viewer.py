@@ -4,7 +4,7 @@ import pytest
 from PIL import Image
 from playwright.sync_api import Page
 
-from conftest import drag, open_files, set_view, wait_for
+from conftest import drag, open_files, open_settings, set_view, wait_for
 from test_slides import screenshot
 
 
@@ -61,6 +61,7 @@ def test_capture_saves_what_is_on_screen(viewer: Page, tiffs, rotation, flip):
 def test_calibration_sets_magnification(viewer: Page, tiffs):
     """Calibrated to 0.25 mm per screen px, 40× through a 10× eyepiece is 0.625 µm per screen px; Default forgets it."""
     open_files(viewer, tiffs["ome_zlib"][0])
+    open_settings(viewer)
     viewer.click("#calibrate")
     viewer.click("#calibration-reference [data-value='usbc']")
     assert abs(viewer.evaluate("$('calibration-shape').getBoundingClientRect().width") - 8.25 / viewer.evaluate("screenMmPerPx()")) < 0.5
@@ -68,10 +69,12 @@ def test_calibration_sets_magnification(viewer: Page, tiffs):
     assert viewer.evaluate("$('calibration-shape').getBoundingClientRect().width") == 33
     viewer.click("#calibration button[value=save]")
     assert wait_for(viewer, "localStorage.getItem('screen-mm-per-device-px')") == "0.25"  # the dialog closes a task later
+    open_settings(viewer)
     viewer.click("#eyepiece-power [data-value='10']")
     viewer.click("#zoom [data-zoom='40']")
     wait_for(viewer, "$('status').textContent.includes('40.0×')")
     assert abs(viewer.evaluate("viewer.viewport.viewportToImageZoom(viewer.viewport.getZoom())") - 0.25 / 0.625) < 1e-3
+    open_settings(viewer)
     viewer.click("#calibrate")
     viewer.click("#calibration button[value=default]")
     wait_for(viewer, "localStorage.getItem('screen-mm-per-device-px') === null")
