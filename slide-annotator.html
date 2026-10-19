@@ -179,8 +179,8 @@
   <div id="layers"></div>
   <div id="uncertainty" hidden>
     <h4><span>Class uncertainty</span></h4>
-    <label title="divides each nucleus's class logits before the softmax: above 1 softens overconfident predictions, below 1 sharpens them">temperature <input id="temperature" type="range" min="-2" max="2" step="0.05" value="0"><span id="temperature-value" class="count"></span></label>
-    <label title="nuclei whose two most likely classes are closer than this, in probability, are ringed in white">margin below <input id="margin" type="range" min="0" max="1" step="0.05" value="0.3"><span id="margin-value" class="count"></span></label>
+    <label title="divides each nucleus's class logits before the softmax, and nuclei are drawn as opaque as their most likely class is probable: 0 draws them all opaque, higher values fade the less confident">temperature <input id="temperature" type="range" min="0" max="4" step="0.05" value="0"><span id="temperature-value" class="count"></span></label>
+    <label hidden title="nuclei whose two most likely classes are closer than this, in probability, are ringed in white">margin below <input id="margin" type="range" min="0" max="1" step="0.05" value="0.3"><span id="margin-value" class="count"></span></label>
   </div>
   <p id="loading" class="note" hidden></p>
   <p id="hint" class="note" hidden>zoom in for nucleus outlines</p>
@@ -900,6 +900,8 @@ const DOT_TILE_PIXELS = 32e6;  // px of nucleus dots kept drawn, per cell and zo
 const DEFAULT_COLOR = [255, 255, 0];
 const UNCERTAIN = "uncertain class";
 const HALO_COLOR = [255, 255, 255];
+const CONFIDENCE_LEVELS = 8;  // opacity steps nuclei with class logits are drawn in, from chance to certain
+const LEAST_OPACITY = 0.15;
 const HALO_GAP = 3;  // slide px between a nucleus and its uncertainty ring
 const NOT_NUCLEUS = "not a nucleus";
 const NOT_NUCLEUS_COLOR = [140, 140, 140];
@@ -1591,6 +1593,7 @@ function enclosingCircle(ring) {
 function addDot(cls, x, y, radius) {
   const key = `${Math.floor(x / CELL)},${Math.floor(y / CELL)}`;
   (cls.dots.get(key) ?? cls.dots.set(key, []).get(key)).push(x, y, radius);
+  return key;
 }
 
 // a detection class emptied: its outlines, dot map and dots
@@ -1598,6 +1601,8 @@ function clearNuclei(cls) {
   cls.paths.clear();
   cls.overview.context.clearRect(0, 0, cls.overview.canvas.width, cls.overview.canvas.height);
   cls.dots.clear();
+  cls.members?.clear();
+  cls.levelPaths?.clear();
   cls.dotsCleared++;
 }
 
@@ -1628,9 +1633,21 @@ function addPolygon(cls, polygon) {
     const y = exterior.reduce((sum, point) => sum + point[1], 0) / exterior.length;
     cls.overview.context.fillRect(Math.floor(x / OVERVIEW), Math.floor(y / OVERVIEW), 1, 1);
     const circle = enclosingCircle(exterior);
-    addDot(cls, circle.x, circle.y, circle.radius);
     (cls.centres ??= []).push(x, y);
+    return addDot(cls, circle.x, circle.y, circle.radius);
   }
+}
+
+// a nucleus with class logits, kept by the cell of its dot as its outline and index, to draw at the opacity of its class confidence
+function addMember(cls, key, ring, i) {
+  const members = (cls.members ??= new Map()).get(key) ?? cls.members.set(key, {rings: [], nuclei: []}).get(key);
+  const flat = new Float32Array(2 * ring.length);
+  for (let j = 0; j < ring.length; j++) {
+    flat[2 * j] = ring[j][0];
+    flat[2 * j + 1] = ring[j][1];
+  }
+  members.rings.push(flat);
+  members.nuclei.push(i);
 }
 
 function addFeatures(layer, features) {
@@ -1642,12 +1659,17 @@ function addFeatures(layer, features) {
     const cls = layerClass(layer, classification.name ?? "unclassified", color, properties?.objectType === "detection");
     cls.count++;
     const polygons = geometry.type === "Polygon" ? [geometry.coordinates] : geometry.coordinates;
-    for (const polygon of polygons) addPolygon(cls, polygon);
 
-    // nuclei with class logits are kept as centre, ring radius and logits, for the uncertainty rings
+    // nuclei with class logits are kept as centre, ring radius and logits, for their confidence and the uncertainty rings
     const logitNames = Object.keys(properties?.measurements ?? {}).filter(name => name.startsWith("logit("));
-    if (!cls.detection || !logitNames.length) continue;
-    const nuclei = layer.nuclei ??= {names: logitNames.map(name => name.slice(6, -1)), x: [], y: [], radius: [], logits: []};
+    const nuclei = cls.detection && logitNames.length ? layer.nuclei ??= {names: logitNames.map(name => name.slice(6, -1)), x: [], y: [], radius: [], logits: []} : null;
+    for (const polygon of polygons) {
+      const key = addPolygon(cls, polygon);
+      if (nuclei) addMember(cls, key, polygon[0], nuclei.x.length);
+    }
+    if (!nuclei) continue;
+    cls.nuclei = nuclei;
+    $("uncertainty").hidden = false;
     const [x, y] = cls.centres.slice(-2);
     nuclei.x.push(x);
     nuclei.y.push(y);
@@ -1657,19 +1679,51 @@ function addFeatures(layer, features) {
   updateHalo(layer, start);
 }
 
-// class probabilities of nucleus i at the current temperature
+// class probabilities of nucleus i at the current temperature; at 0, all on the most likely class
 function nucleusProbs(nuclei, i) {
-  const k = nuclei.names.length, temperature = 2 ** Number($("temperature").value);
-  const scaled = nuclei.logits.slice(i * k, (i + 1) * k).map(logit => logit / temperature), top = Math.max(...scaled);
+  const k = nuclei.names.length, temperature = Number($("temperature").value), logits = nuclei.logits.slice(i * k, (i + 1) * k);
+  if (!temperature) return logits.map((_, c) => c === logits.indexOf(Math.max(...logits)) ? 1 : 0);
+  const scaled = logits.map(logit => logit / temperature), top = Math.max(...scaled);
   const exps = scaled.map(value => Math.exp(value - top)), total = exps.reduce((sum, value) => sum + value, 0);
   return exps.map(value => value / total);
+}
+
+// opacity step of nucleus i at `temperature` > 0: its most likely class's probability, from chance (0) to certain (CONFIDENCE_LEVELS - 1)
+function confidenceLevel(nuclei, i, temperature) {
+  const k = nuclei.names.length, logits = nuclei.logits;
+  let top = -Infinity, total = 0;
+  for (let c = i * k; c < (i + 1) * k; c++) top = Math.max(top, logits[c]);
+  for (let c = i * k; c < (i + 1) * k; c++) total += Math.exp((logits[c] - top) / temperature);
+  return Math.round((k / total - 1) / (k - 1) * (CONFIDENCE_LEVELS - 1));
+}
+const levelOpacity = level => LEAST_OPACITY + (1 - LEAST_OPACITY) * level / (CONFIDENCE_LEVELS - 1);
+
+// a cell's nuclei as one outline path per opacity step, kept until the temperature or the cell changes
+function levelPaths(cls, key, temperature) {
+  const members = cls.members.get(key), cached = cls.levelPaths?.get(key);
+  if (cached?.temperature === temperature && cached.count === members.nuclei.length) return cached.paths;
+  const paths = Array.from({length: CONFIDENCE_LEVELS}, () => new Path2D());
+  for (let m = 0; m < members.nuclei.length; m++) {
+    const path = paths[confidenceLevel(cls.nuclei, members.nuclei[m], temperature)], ring = members.rings[m];
+    path.moveTo(ring[0], ring[1]);
+    for (let j = 2; j < ring.length; j += 2) path.lineTo(ring[j], ring[j + 1]);
+    path.lineTo(ring[0], ring[1]);
+  }
+  (cls.levelPaths ??= new Map()).set(key, {temperature, count: members.nuclei.length, paths});
+  return paths;
+}
+
+// a cell's dots' opacity steps, when every dot in it has class logits
+function dotLevels(cls, key, list, temperature) {
+  const members = cls.members?.get(key);
+  if (!temperature || members?.nuclei.length !== list.length / 3) return null;
+  return members.nuclei.map(i => confidenceLevel(cls.nuclei, i, temperature));
 }
 
 // ring the nuclei from index `from` on whose top two class probabilities are closer than the margin; from 0 rebuilds the rings
 function updateHalo(layer, from = 0) {
   const nuclei = layer.nuclei;
   if (!nuclei || !MANUAL_REVIEW) return;
-  $("uncertainty").hidden = false;
   const halo = layerClass(layer, UNCERTAIN, HALO_COLOR, true);
   halo.halo = true;
   if (!from) {
@@ -1694,7 +1748,8 @@ function updateHalo(layer, from = 0) {
 }
 
 const showSlider = (id, format) => { $(`${id}-value`).textContent = format(Number($(id).value)); };
-for (const [id, format] of [["temperature", value => (2 ** value).toFixed(2)], ["margin", value => value.toFixed(2)]]) {
+$("margin").parentElement.hidden = !MANUAL_REVIEW;
+for (const [id, format] of [["temperature", value => value.toFixed(2)], ["margin", value => value.toFixed(2)]]) {
   showSlider(id, format);
   $(id).addEventListener("input", () => {
     showSlider(id, format);
@@ -2591,13 +2646,17 @@ window.addEventListener("beforeunload", event => {
   if (detection || queue.length || Object.values(layersBySlide).flat().some(unsaved)) event.preventDefault();
 });
 
+function* visibleCells(topLeft, bottomRight) {
+  for (let cy = Math.floor(topLeft.y / CELL) - 1; cy <= Math.floor(bottomRight.y / CELL); cy++)
+    for (let cx = Math.floor(topLeft.x / CELL) - 1; cx <= Math.floor(bottomRight.x / CELL); cx++) yield `${cx},${cy}`;
+}
+
 function* visiblePaths(cls, topLeft, bottomRight) {
   if (!cls.detection) return yield* cls.paths.values();
-  for (let cy = Math.floor(topLeft.y / CELL) - 1; cy <= Math.floor(bottomRight.y / CELL); cy++)
-    for (let cx = Math.floor(topLeft.x / CELL) - 1; cx <= Math.floor(bottomRight.x / CELL); cx++) {
-      const path = cls.paths.get(`${cx},${cy}`);
-      if (path) yield path;
-    }
+  for (const key of visibleCells(topLeft, bottomRight)) {
+    const path = cls.paths.get(key);
+    if (path) yield path;
+  }
 }
 
 let cursorText = "";
@@ -3013,7 +3072,14 @@ function drawLayers(target, layerList, scale, topLeft, bottomRight) {
     }
     nucleiCtx.strokeStyle = `rgb(${cls.color})`;
     nucleiCtx.lineWidth = 1.5 / scale;
-    for (const path of visiblePaths(cls, topLeft, bottomRight)) nucleiCtx.stroke(path);
+    const temperature = Number($("temperature").value);
+    if (!temperature || !cls.members) {
+      for (const path of visiblePaths(cls, topLeft, bottomRight)) nucleiCtx.stroke(path);
+      continue;
+    }
+    for (const key of visibleCells(topLeft, bottomRight)) if (cls.members.has(key))
+      levelPaths(cls, key, temperature).forEach((path, level) => { nucleiCtx.globalAlpha = levelOpacity(level); nucleiCtx.stroke(path); });
+    nucleiCtx.globalAlpha = 1;
   }
   if (rings.length) composeNuclei(target, nucleiCtx, rings, depths);
   if (dotBudget.missing && !dotsPending) {
@@ -3060,21 +3126,22 @@ let dotTilePixels = 0, dotsPending = false;
 
 // a cell's dots at `zoom` px per slide px: each nucleus filled at its own size, but never under `least` px in radius,
 // with a margin for those reaching over the cell's edges, so neighbouring tiles overlap
-function dotTile(list, color, zoom, least, stamp) {
+function dotTile(list, color, zoom, least, stamp, levels = null) {
   let pad = least;
   for (let i = 2; i < list.length; i += 3) pad = Math.max(pad, list[i] * zoom);
   pad = Math.ceil(pad);
   const size = Math.ceil(CELL * zoom) + 2 * pad, canvas = new OffscreenCanvas(size, size), context = canvas.getContext("2d");
   context.fillStyle = `rgb(${color})`;
   context.translate(pad, pad);
-  context.beginPath();
+  const paths = Array.from({length: levels ? CONFIDENCE_LEVELS : 1}, () => new Path2D());
   const [x0, y0] = [Math.floor(list[0] / CELL) * CELL, Math.floor(list[1] / CELL) * CELL];
   for (let i = 0; i < list.length; i += 3) {
     const [x, y, radius] = [(list[i] - x0) * zoom, (list[i + 1] - y0) * zoom, Math.max(list[i + 2] * zoom, least)];
-    context.moveTo(x + radius, y);
-    context.arc(x, y, radius, 0, 2 * Math.PI);
+    const path = paths[levels ? levels[i / 3] : 0];
+    path.moveTo(x + radius, y);
+    path.arc(x, y, radius, 0, 2 * Math.PI);
   }
-  context.fill();
+  paths.forEach((path, level) => { context.globalAlpha = levels ? levelOpacity(level) : 1; context.fill(path); });
   return {canvas, pad, stamp, pixels: size * size};
 }
 
@@ -3089,12 +3156,13 @@ function drawDots(context, cls, outputScale, outputPerScreen, topLeft, bottomRig
     for (let cx = Math.floor(topLeft.x / CELL) - 1; cx <= Math.floor(bottomRight.x / CELL) + 1; cx++) {
       const list = cls.dots.get(`${cx},${cy}`);
       if (!list) continue;
-      const key = `${cls.id}|${zoom}|${least}|${cx},${cy}`, stamp = `${cls.dotsCleared}|${list.length}`;
+      const temperature = cls.members?.has(`${cx},${cy}`) ? Number($("temperature").value) : 0;
+      const key = `${cls.id}|${zoom}|${least}|${cx},${cy}`, stamp = `${cls.dotsCleared}|${list.length}|${temperature}`;
       let tile = dotTiles.get(key);
       if (tile) dotTiles.delete(key);
       if (tile?.stamp !== stamp && performance.now() < budget.until) {
         if (tile) dotTilePixels -= tile.pixels;
-        tile = dotTile(list, cls.color, zoom, least, stamp);
+        tile = dotTile(list, cls.color, zoom, least, stamp, dotLevels(cls, `${cx},${cy}`, list, temperature));
         dotTilePixels += tile.pixels;
       }
       if (tile) {
