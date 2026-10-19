@@ -121,6 +121,48 @@ def test_measure_line(app: Page, tiffs):
     assert len(app.evaluate("slide.areas")) == 1
 
 
+def test_fingers_pan_while_measuring_and_only_the_pen_draws_once_used(app: Page, tiffs, browser_name):
+    """Two fingers pan without leaving a line end behind; once a pen is used, a palm on the screen neither draws nor moves the slide."""
+    if browser_name != "chromium":
+        return  # touch and pen input are sent through the DevTools protocol
+    open_files(app, tiffs["ome_zlib"][0])
+    app.evaluate("viewer.viewport.zoomTo(viewer.viewport.imageToViewportZoom(1), null, true)")
+    app.click("#measure")
+    cdp = app.context.new_cdp_session(app)
+
+    def touch(kind, *points):
+        cdp.send("Input.dispatchTouchEvent", {"type": kind, "touchPoints": [{"x": x, "y": y, "id": i} for i, (x, y) in points]})
+
+    centre = app.evaluate("viewer.viewport.getCenter(true).x")
+    touch("touchStart", (0, (300, 300)))
+    touch("touchMove", (0, (303, 300)))
+    touch("touchStart", (0, (303, 300)), (1, (400, 400)))
+    for step in range(1, 11):
+        touch("touchMove", (0, (303 + 20 * step, 300)), (1, (400 + 20 * step, 402)))
+    touch("touchEnd", (1, (600, 402)))
+    touch("touchMove", (0, (530, 300)))  # the finger left on the screen draws nothing
+    touch("touchEnd")
+    assert app.evaluate("viewer.viewport.getCenter(true).x") < centre  # panned right
+    assert app.evaluate("slide.areas") == []
+    assert app.locator("#measure").get_attribute("class") == "active"
+
+    def pen(kind, x, y):
+        cdp.send("Input.dispatchMouseEvent", {"type": kind, "x": x, "y": y, "button": "left", "buttons": 0 if kind == "mouseReleased" else 1, "clickCount": 1, "pointerType": "pen"})
+
+    app.evaluate("viewer.viewport.zoomTo(viewer.viewport.imageToViewportZoom(1), null, true)")  # the pinch zoomed a little
+    centre = app.evaluate("viewer.viewport.getCenter(true)")
+    pen("mousePressed", 300, 500)
+    touch("touchStart", (0, (700, 600)))  # the palm
+    for step in range(1, 11):
+        pen("mouseMoved", 300 + 20 * step, 500)
+        touch("touchMove", (0, (700 + 5 * step, 600 + 5 * step)))
+    touch("touchEnd")
+    pen("mouseReleased", 500, 500)
+    assert app.evaluate("viewer.viewport.getCenter(true)") == centre
+    [line] = app.evaluate("slide.areas")
+    assert abs(np.hypot(*np.diff(line["ring"], axis=0)[0]) - 200) <= 1
+
+
 def test_microscope_field_sets_magnification(app: Page, tiffs):
     """With the field on, 40× through a 10×/22 eyepiece shows a 0.55 mm circle, the slide dimmed outside it."""
     open_files(app, tiffs["ome_zlib"][0])
