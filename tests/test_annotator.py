@@ -283,16 +283,17 @@ def test_paint_and_erase_rois(annotator: Page, tiffs):
 
 
 def test_class_colour_width_and_merge(annotator: Page, tiffs, nuclei):
-    """A class takes a new colour and width; merged into another, its nuclei count there, and a rename covers both."""
+    """A class takes a new colour, width and fill; merged into another, its nuclei count there, and a rename covers both."""
     path, centres = nuclei
     open_files(annotator, tiffs["ome_zlib"][0])
     annotator.set_input_files("#files", path)
     wait_for(annotator, "$('layers').querySelectorAll('label').length >= 2")
     tumor = annotator.locator("#layers label", has_text="Tumor")
-    tumor.locator("input.swatch").evaluate("input => { input.value = '#00ff00'; input.dispatchEvent(new Event('input')); input.dispatchEvent(new Event('change')); }")
-    tumor.locator(".edit").click()
-    annotator.locator(".class-edit input[type=range]").fill("4")
-    assert annotator.evaluate("(({color, width}) => [color, width])(layers[0].classes.get('Tumor'))") == [[0, 255, 0], 4]
+    tumor.locator(".swatch-edit").click()
+    annotator.locator(".class-edit input[type=color]").evaluate("input => { input.value = '#00ff00'; input.dispatchEvent(new Event('input')); input.dispatchEvent(new Event('change')); }")
+    annotator.locator(".class-edit input[type=range]").first.fill("4")
+    annotator.locator(".class-edit input[type=range]").nth(1).fill("0.3")
+    assert annotator.evaluate("(({color, width, fill}) => [color, width, fill])(layers[0].classes.get('Tumor'))") == [[0, 255, 0], 4, 0.3]
 
     annotator.locator(".class-edit select").select_option("Lymphocyte")
     assert class_counts(annotator) == {"Lymphocyte": sum(len(c) for c in centres.values())}

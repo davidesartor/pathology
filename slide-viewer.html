@@ -96,15 +96,22 @@
   .area { display: flex; align-items: center; gap: 4px; padding: 1px 0; font-variant-numeric: tabular-nums; }
   .area input[type=text] { flex: 1; min-width: 0; background: none; border: 1px solid transparent; border-radius: 6px; padding: 2px 5px; }
   .area input[type=text]:hover, .area input[type=text]:focus { border-color: var(--line); outline: none; }
-  .area input[type=color] { width: 20px; height: 20px; padding: 0; border: none; background: none; cursor: pointer; }
+  .swatch-edit { position: relative; flex: none; width: 16px; height: 16px; min-height: 0; margin-right: 3px; padding: 0; border: none; border-radius: 4px; }
+  .swatch-edit svg { position: absolute; right: -5px; bottom: -5px; width: 11px; height: 11px; fill: var(--muted); }
+  .swatch-edit.active { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .swatch-edit:disabled { cursor: default; }
+  .swatch-edit:disabled svg { display: none; }
+  @media (hover: hover) { .swatch-edit:not(:disabled):hover svg { fill: var(--fg); } }
+  .area .swatch-edit { margin: 0 5px 0 2px; }
+  .area-edit input[type=color] { width: 40px; height: 22px; padding: 0; border: 1px solid var(--line); border-radius: 5px; background: none; cursor: pointer; }
   .brush { display: flex; align-items: center; gap: 8px; margin: 8px 0 4px; color: var(--muted); font-size: 12px; }
   .brush input { flex: 1; }
   [data-part=highlight-mode] { margin-bottom: 8px; }
   .area-edit { display: flex; flex-direction: column; gap: 6px; margin: 2px 0 6px 24px; padding: 8px; border: 1px solid var(--line); border-radius: 8px; color: var(--muted); font-size: 12px; }
-  .area-edit label { display: flex; align-items: center; gap: 8px; }
-  .area-edit input[type=range] { flex: 1; }
+  .area-edit label { display: grid; grid-template-columns: 40px minmax(0, 1fr) 44px; align-items: center; gap: 8px; white-space: nowrap; }
+  .area-edit label .count { text-align: right; }
+  .area-edit input[type=range] { min-width: 0; }
   .area-edit select { min-width: 0; flex: 1; }
-  .area button.active { color: var(--accent); }
   .area button { min-height: 24px; padding: 0 6px; background: none; border: none; color: var(--faint); }
   @media (hover: hover) { .area button:hover { color: var(--fg); background: var(--raised); } }
   .area .count { padding-left: 4px; }
@@ -208,7 +215,7 @@
     <button data-part="pan" class="active" title="move around: drag to pan, scroll or pinch to zoom"><svg class="ico" viewBox="0 0 20 20"><path d="M10 2v16M2 10h16M10 2 7.6 4.4M10 2l2.4 2.4M10 18l-2.4-2.4M10 18l2.4-2.4M2 10l2.4-2.4M2 10l2.4 2.4M18 10l-2.4-2.4M18 10l-2.4 2.4"/></svg>Pan</button>
     <button data-part="highlight" title="outline areas of interest on this slide, each in its own colour and with a name; captures show them"><svg class="ico" viewBox="0 0 20 20"><path d="M4 6.5 9.5 3l6.5 3 1 7-6 4-7-3z"/><circle cx="4" cy="6.5" r="1.3" fill="currentColor"/><circle cx="16" cy="6" r="1.3" fill="currentColor"/></svg>Highlight</button>
     <button data-part="measure" title="draw straight lines labelled with their length; captures show them"><svg class="ico" viewBox="0 0 20 20"><path d="M3 14 14 3l3 3L6 17z"/><path d="M6.5 10.5 8 12M9 8l1.5 1.5M11.5 5.5 13 7"/></svg>Measure</button>
-    <button data-part="capture" title="frame part of the slide and save it as a full-resolution PNG, turned and mirrored as on screen"><svg class="ico" viewBox="0 0 20 20"><path d="M3 7V3h4M13 3h4v4M17 13v4h-4M7 17H3v-4"/><circle cx="10" cy="10" r="2.6"/></svg>Capture</button>
+    <button data-part="capture" title="frame part of the slide and save it as an image, turned and mirrored as on screen"><svg class="ico" viewBox="0 0 20 20"><path d="M3 7V3h4M13 3h4v4M17 13v4h-4M7 17H3v-4"/><circle cx="10" cy="10" r="2.6"/></svg>Capture</button>
     <div class="sep"></div>
     <button data-part="open-help" data-pop="help" title="how to move around, and the keys"><svg class="ico" viewBox="0 0 20 20"><circle cx="10" cy="10" r="7.5"/><path d="M7.8 7.8a2.3 2.3 0 1 1 3 2.2c-.6.2-.8.7-.8 1.3v.4"/><circle cx="10" cy="14.2" r=".6" fill="currentColor"/></svg>Help</button>
   </div>
@@ -256,8 +263,12 @@
         <div class="dims"><input type="text" inputmode="decimal" data-part="capture-width" title="width in µm; Enter sets it">×<input type="text" inputmode="decimal" data-part="capture-height" title="height in µm; Enter sets it"></div>
         <div class="option">Scale bar</div>
         <div class="seg" data-part="capture-corner"><button data-value="top-left" title="top left">↖</button><button data-value="top-right" title="top right">↗</button><button data-value="bottom-left" title="bottom left">↙</button><button data-value="bottom-right" title="bottom right">↘</button><button data-value="none">None</button></div>
+        <div class="option">Format</div>
+        <div class="seg" data-part="capture-format"><button data-value="png" title="lossless">PNG</button><button data-value="jpeg" title="smaller file, slightly lossy">JPEG</button></div>
+        <div class="option">Resolution</div>
+        <div class="seg" data-part="capture-resolution"><button data-value="1" title="one image px per slide px">Full</button><button data-value="2">½</button><button data-value="4">¼</button><button data-value="8">⅛</button></div>
         <p class="capture-size" data-part="capture-size"></p>
-        <div class="buttons"><button data-part="capture-save" class="primary">Save PNG</button></div>
+        <div class="buttons"><button data-part="capture-save" class="primary">Save</button></div>
       </div>
     </div>
     <div class="areas" data-part="areas"></div>
@@ -803,6 +814,7 @@ const AREA_COLOR = "#ffdc00";
 const CLOSE_DISTANCE = 10;  // screen px from the first corner within which a click closes the area
 const TRACE_STEP = 4;  // screen px between traced points
 
+const SWATCH_GEAR = `<svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="10" fill="var(--panel)"/><path fill-rule="evenodd" d="M8.56 3.76L8.65 1.51L11.35 1.51L11.44 3.76A6.4 6.4 0 0 1 13.39 4.57L15.05 3.04L16.96 4.95L15.43 6.61A6.4 6.4 0 0 1 16.24 8.56L18.49 8.65L18.49 11.35L16.24 11.44A6.4 6.4 0 0 1 15.43 13.39L16.96 15.05L15.05 16.96L13.39 15.43A6.4 6.4 0 0 1 11.44 16.24L11.35 18.49L8.65 18.49L8.56 16.24A6.4 6.4 0 0 1 6.61 15.43L4.95 16.96L3.04 15.05L4.57 13.39A6.4 6.4 0 0 1 3.76 11.44L1.51 11.35L1.51 8.65L3.76 8.56A6.4 6.4 0 0 1 4.57 6.61L3.04 4.95L4.95 3.04L6.61 4.57A6.4 6.4 0 0 1 8.56 3.76ZM12.6 10A2.6 2.6 0 1 0 7.4 10A2.6 2.6 0 1 0 12.6 10Z"/></svg>`;
 const AREA_WIDTH = 1.5;  // screen px
 const ERASE_COLOR = "#ff5a5a";
 
@@ -1004,7 +1016,13 @@ function drawHighlights(ctx, slide, toOutput, size) {
       outlinedText(ctx, label, (a.x + b.x) / 2 + 14 * size * nx, (a.y + b.y) / 2 + 14 * size * ny, area.color, size);
       continue;
     }
-    strokeOutline(ctx, ringsPath(area.rings, toOutput), 1 / size, area.color, area.width);
+    const path = ringsPath(area.rings, toOutput);
+    if (area.fill) {
+      Object.assign(ctx, {fillStyle: area.color, globalAlpha: area.fill});
+      ctx.fill(path, "evenodd");
+      ctx.globalAlpha = 1;
+    }
+    strokeOutline(ctx, path, 1 / size, area.color, area.width);
     if (!area.name) continue;
     const top = area.rings.flat().map(([x, y]) => toOutput.transformPoint({x, y})).reduce((a, b) => b.y < a.y ? b : a);
     ctx.textAlign = "center";
@@ -1036,12 +1054,12 @@ function drawCaption(ctx, slide, width, height, downsample, {corner}, toOutput =
   for (const tickLeft of [barLeft, barLeft + barWidth - tickWidth]) ctx.fillRect(tickLeft, barTop + (barHeight - tickHeight) / 2, tickWidth, tickHeight);
 }
 
-// a capture is saved as it looks on screen: turned and mirrored as the view is, at full resolution unless the browser cannot hold it
+// a capture is saved as it looks on screen: turned and mirrored as the view is, at the chosen resolution or lower if the browser cannot hold it
 const MAX_IMAGE_PIXELS = navigator.maxTouchPoints > 1 ? 16e6 : 100e6;  // what the browser's canvas holds (iPad Safari: 4096²)
 const MAX_IMAGE_SIDE = 16384;
 const IMAGE_PIECE = 2048;  // image px per side of the pieces the slide is read in
 function imageDownsample({width, height}) {
-  let downsample = 1;
+  let downsample = captureSettings.resolution;
   while (width * height / downsample ** 2 > MAX_IMAGE_PIXELS || Math.max(width, height) / downsample > MAX_IMAGE_SIDE) downsample *= 2;
   return downsample;
 }
@@ -1095,10 +1113,19 @@ async function renderArea(slide, area, turn, screenScale, caption, onProgress) {
   return {canvas, downsample};
 }
 
+// JPEG has no transparency: what the slide leaves uncovered is white, not black
+function whiteBehind(canvas) {
+  const context = canvas.getContext("2d");
+  context.setTransform(1, 0, 0, 1, 0, 0);
+  Object.assign(context, {globalCompositeOperation: "destination-over", fillStyle: "#fff"});
+  context.fillRect(0, 0, canvas.width, canvas.height);
+}
+
 // saved where the user picks (Chrome) or as a download; the picker opens first, while the click still allows it
-async function saveImage(suggestedName, render) {
+const IMAGE_FORMATS = {png: {description: "PNG image", accept: {"image/png": [".png"]}}, jpeg: {description: "JPEG image", accept: {"image/jpeg": [".jpg"]}}};
+async function saveImage(suggestedName, format, render) {
   try {
-    const handle = window.showSaveFilePicker ? await showSaveFilePicker({suggestedName, types: [{description: "PNG image", accept: {"image/png": [".png"]}}]}) : null;
+    const handle = window.showSaveFilePicker ? await showSaveFilePicker({suggestedName, types: [IMAGE_FORMATS[format]]}) : null;
     const blob = await render();
     if (handle) {
       const writable = await handle.createWritable();
@@ -1117,7 +1144,7 @@ async function saveImage(suggestedName, render) {
 }
 
 // the last capture's shape, size (slide px) and corner, for the next
-const captureSettings = {shape: "free", portrait: false, size: null, corner: "bottom-left"};
+const captureSettings = {shape: "free", portrait: false, size: null, corner: "bottom-left", format: "png", resolution: 1};
 try { Object.assign(captureSettings, JSON.parse(localStorage.getItem("capture-settings"))); } catch {}
 
 // the simulated eyepiece, shared by both panes: its power, its field number (mm) and whether its field is shown,
@@ -1637,6 +1664,8 @@ function createPane(index) {
     for (const button of part("capture-shape").querySelectorAll("[data-value]")) button.classList.toggle("active", button.dataset.value === captureSettings.shape);
     part("capture-turn").classList.toggle("active", captureSettings.portrait);
     for (const button of part("capture-corner").children) button.classList.toggle("active", button.dataset.value === captureSettings.corner);
+  for (const button of part("capture-format").children) button.classList.toggle("active", button.dataset.value === captureSettings.format);
+  for (const button of part("capture-resolution").children) button.classList.toggle("active", Number(button.dataset.value) === captureSettings.resolution);
   };
   const changeCaptureSettings = change => {
     Object.assign(captureSettings, change);
@@ -1665,6 +1694,8 @@ function createPane(index) {
     input.addEventListener("keydown", event => { if (event.key === "Enter") input.blur(); });
   }
   for (const button of part("capture-corner").children) button.addEventListener("click", () => changeCaptureSettings({corner: button.dataset.value}));
+  for (const button of part("capture-format").children) button.addEventListener("click", () => changeCaptureSettings({format: button.dataset.value}));
+  for (const button of part("capture-resolution").children) button.addEventListener("click", () => changeCaptureSettings({resolution: Number(button.dataset.value)}));
   showCaptureSettings();
   pane.showCaptureSettings = showCaptureSettings;
   function saveFrame() {
@@ -1783,13 +1814,14 @@ function createPane(index) {
   async function saveArea(area) {
     const turn = viewTurn(viewer), points = areaRings(area).flat(), box = turnedBox(points, turn), downsample = imageDownsample(box);
     const [x, y] = [Math.round(Math.max(0, Math.min(...points.map(([x]) => x)))), Math.round(Math.max(0, Math.min(...points.map(([, y]) => y))))];
-    const name = `${slide.name}_x${x}_y${y}${downsample > 1 ? `_1to${downsample}` : ""}.png`;
+    const {format} = captureSettings, name = `${slide.name}_x${x}_y${y}${downsample > 1 ? `_1to${downsample}` : ""}.${format === "jpeg" ? "jpg" : "png"}`;
     const captured = slide, scale = screenScale(), caption = {corner: captureSettings.corner};
     try {
-      await saveImage(name, async () => {
+      await saveImage(name, format, async () => {
         const {canvas} = await renderArea(captured, area, turn, scale, caption, fraction => setLoading(`reading the capture: ${Math.round(fraction * 100)}%`));
         setLoading("saving the capture…");
-        return canvas.convertToBlob({type: "image/png"});
+        if (format === "jpeg") whiteBehind(canvas);
+        return canvas.convertToBlob({type: `image/${format}`, quality: 0.92});
       });
       setLoading("");
     } catch (error) {
@@ -1813,33 +1845,41 @@ function createPane(index) {
       const row = document.createElement("div");
       row.className = "area";
       const thing = area.kind === "line" ? "measurement" : "highlight";
-      row.innerHTML = `<input type="color" title="colour of this ${thing}"><input type="text" title="name of this ${thing}, shown by it" spellcheck="false"><button title="show this ${thing}">◎</button><button title="line width${area.kind === "line" ? "" : " and merging"}">⋯</button><button title="remove this ${thing}">×</button>`;
-      const [color, name, showButton, edit, remove] = row.children;
-      [color.value, name.value] = [area.color, area.name];
+      row.innerHTML = `<button class="swatch-edit" title="colour and line width${area.kind === "line" ? "" : ", and merging into another highlight"}">${SWATCH_GEAR}</button><input type="text" title="name of this ${thing}, shown by it" spellcheck="false"><button title="show this ${thing}">◎</button><button title="remove this ${thing}">×</button>`;
+      const [swatch, name, showButton, remove] = row.children;
+      [swatch.style.background, name.value] = [area.color, area.name];
       if (area.kind === "line") {
         name.placeholder = "Measure";
         name.after(Object.assign(document.createElement("span"), {className: "count", textContent: lineLength(slide, area.ring)}));
       }
-      color.addEventListener("input", () => { area.color = color.value; areasChanged(slide, pane); });
       name.addEventListener("input", () => { area.name = name.value; areasChanged(slide, pane); });
       name.addEventListener("keydown", event => { if (event.key === "Enter" || event.key === "Escape") name.blur(); });
       showButton.addEventListener("click", () => goToArea(area));
-      edit.classList.toggle("active", editingArea === area);
-      edit.addEventListener("click", () => { editingArea = editingArea === area ? null : area; renderAreas(); });
+      swatch.classList.toggle("active", editingArea === area);
+      swatch.addEventListener("click", () => { editingArea = editingArea === area ? null : area; renderAreas(); });
       remove.addEventListener("click", () => removeArea(area));
-      return editingArea === area ? [row, areaEditor(area)] : [row];
+      return editingArea === area ? [row, areaEditor(area, swatch)] : [row];
     }));
   }
 
-  // an area's line width, and for a highlight, merging it into another, which keeps its name and colour
-  function areaEditor(area) {
+  // an area's colour and line width, and for a highlight, merging it into another, which keeps its name and colour
+  function areaEditor(area, swatch) {
     const editor = document.createElement("div");
     editor.className = "area-edit";
-    editor.innerHTML = `<label>width <input type="range" min="0.5" max="6" step="0.5"><span class="count"></span></label>`;
-    const [width, shown] = editor.querySelectorAll("input, .count");
+    editor.innerHTML = `<label>colour <input type="color"></label><label>width <input type="range" min="0.5" max="6" step="0.5"><span class="count"></span></label>`;
+    const [color, width, shown] = editor.querySelectorAll("input, .count");
+    color.value = area.color;
+    color.addEventListener("input", () => { area.color = swatch.style.background = color.value; areasChanged(slide, pane); });
     const showWidth = () => { width.value = area.width ?? AREA_WIDTH; shown.textContent = `${width.value} px`; };
     width.addEventListener("input", () => { area.width = Number(width.value); showWidth(); areasChanged(slide, pane); });
     showWidth();
+    if (area.rings) {
+      editor.insertAdjacentHTML("beforeend", `<label title="shade the inside, as well as the outline">fill <input type="range" min="0" max="0.8" step="0.1"><span class="count"></span></label>`);
+      const [fill, fillShown] = editor.lastChild.querySelectorAll("input, .count");
+      const showFill = () => { fill.value = area.fill ?? 0; fillShown.textContent = `${Math.round(100 * fill.value)}%`; };
+      fill.addEventListener("input", () => { area.fill = Number(fill.value); showFill(); areasChanged(slide, pane); });
+      showFill();
+    }
     const others = slide.areas.filter(other => other !== area && other.rings);
     if (area.rings && others.length) {
       const merge = document.createElement("select");
@@ -1906,8 +1946,8 @@ function createPane(index) {
       input.disabled = !slide.mpp;
       if (document.activeElement !== input) input.value = slide.mpp ? +(length * slide.mpp).toPrecision(4) : "";
     }
-    part("capture-size").textContent = `${outWidth.toLocaleString()} × ${outHeight.toLocaleString()} px` + (downsample > 1 ? ` — too large for this browser at full resolution, so saved at 1/${downsample}` : "");
-    part("capture-size").classList.toggle("warn", downsample > 1);
+    part("capture-size").textContent = `${outWidth.toLocaleString()} × ${outHeight.toLocaleString()} px` + (downsample > captureSettings.resolution ? ` — too large for this browser at that resolution, so saved at 1/${downsample}` : "");
+    part("capture-size").classList.toggle("warn", downsample > captureSettings.resolution);
   }
 
   // the microscope field: the slide outside a centred circle dimmed

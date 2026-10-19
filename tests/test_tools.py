@@ -26,6 +26,29 @@ def test_capture_frame_keeps_its_shape_and_settings(app: Page, tiffs):
     assert abs(width / height - 4 / 3) < 0.01, size
 
 
+def test_capture_format_and_resolution(app: Page, tiffs):
+    """Format and resolution are kept settings: half resolution halves each side, JPEG saves a .jpg."""
+    open_files(app, tiffs["ome_zlib"][0])
+    app.evaluate("viewer.viewport.zoomTo(viewer.viewport.imageToViewportZoom(1), null, true)")
+    app.click("#capture")
+    app.click("#capture-shape [data-value='4:3']")
+    app.fill("#capture-width", "500")
+    app.press("#capture-width", "Enter")
+    app.click("#capture-resolution [data-value='2']")
+    app.click("#capture-format [data-value='jpeg']")
+    assert app.locator("#capture-size").text_content().startswith("1,000 × 750 px")
+    with app.expect_download() as download:
+        app.click("#capture-save")
+    assert download.value.suggested_filename.endswith("_1to2.jpg")
+    image = Image.open(download.value.path())
+    assert image.format == "JPEG" and image.size == (1000, 750)
+    app.reload()
+    open_files(app, tiffs["ome_zlib"][0])
+    app.click("#capture")
+    assert app.locator("#capture-format .active").get_attribute("data-value") == "jpeg"
+    assert app.locator("#capture-resolution .active").get_attribute("data-value") == "2"
+
+
 def test_capture_has_no_seams_between_mrxs_photos(app: Page, tmp_path):
     """Turned, a capture of a flat gray MRXS slide is flat gray inside: the white fill never shows between its camera images."""
     open_folder(app, write_mrxs(tmp_path, "flat", (128, 160), (6, 6), 2, None, 0, gray=200))
