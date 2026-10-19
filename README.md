@@ -3,11 +3,11 @@
 Whole-slide image viewer and annotator that runs entirely in the browser.
 
 - **Viewer:** https://davidesartor.github.io/pathology/slide-viewer.html
-  Open TIFF/SVS/MRXS slides, rotate/flip, highlight areas, measure and capture images with a scale bar.
+  Open TIFF/SVS/MRXS slides, view them at the magnification of a microscope objective or within a microscope's field of view, rotate/flip, highlight areas, measure and capture images with a scale bar.
 - **Annotator:** https://davidesartor.github.io/pathology/slide-annotator.html
-  Everything above, plus GeoJSON overlays, ROIs and in-browser nucleus detection.
+  Everything above, plus GeoJSON overlays, ROIs, annotations you can edit after drawing them, and in-browser nucleus detection with HoVer-NeXt and CellViT++ models.
 
-Each page is a single HTML file. You can also download it and open it locally by double-clicking; there is nothing to install.
+Each page is a single HTML file. You can also download it and open it locally by double-clicking; there is nothing to install. Both pages work on computers, iPads and phones; MRXS slides, which are folders, need a computer.
 
 ## Disclaimer
 
@@ -35,7 +35,9 @@ These are loaded at runtime from their original sources and are not redistribute
 | onnxruntime-web 1.30.0 (annotator only) | jsDelivr | MIT |
 | HoVer-NeXt weights, Lizard/PanNuke ([Zenodo 10635618](https://zenodo.org/records/10635618)) | Zenodo | CC BY-NC-SA 4.0 (non-commercial) |
 | HoVer-NeXt weights, PUMA melanoma ([Zenodo 15526308](https://zenodo.org/records/15526308)) | Zenodo | CC BY 4.0 |
+| HoVer-NeXt weights, PUMA melanoma, ten classes ([Zenodo 13881999](https://zenodo.org/records/13881999)) | Zenodo | CC BY 4.0 |
 | CellViT++ weights ([Zenodo 15024474](https://zenodo.org/records/15024474)) | Zenodo | Set by the CellViT authors; trained on PanNuke (CC BY-NC-SA 4.0) |
+| CellViT++ PUMA melanoma classifiers, three and ten classes ([Zenodo 14894011](https://zenodo.org/records/14894011)) | Zenodo | CC BY-NC 4.0 (non-commercial) |
 
 The model weights are downloaded into your browser only when you choose to run detection. Their licences (some non-commercial) apply to that use. If you use their outputs in a publication, cite the original model papers.
 
