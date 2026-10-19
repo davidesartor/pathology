@@ -115,10 +115,12 @@ def test_paint_erase_and_merge_highlights(viewer: Page, tiffs):
     viewer.keyboard.press("Backspace")
     assert len(areas()[0]) == 1
 
-    viewer.locator("#areas .area button[title^='line width']").first.click()
-    viewer.locator("#areas .area-edit input[type=range]").fill("4")
-    assert viewer.evaluate("slide.areas[0].width") == 4
-    viewer.locator("#areas .area button[title^='line width']").nth(1).click()
+    viewer.locator("#areas .area .swatch-edit").first.click()
+    viewer.locator("#areas .area-edit input[type=color]").evaluate("input => { input.value = '#00ff00'; input.dispatchEvent(new Event('input')); }")
+    viewer.locator("#areas .area-edit input[type=range]").first.fill("4")
+    viewer.locator("#areas .area-edit input[type=range]").nth(1).fill("0.3")
+    assert viewer.evaluate("[slide.areas[0].color, slide.areas[0].width, slide.areas[0].fill]") == ["#00ff00", 4, 0.3]
+    viewer.locator("#areas .area .swatch-edit").nth(1).click()
     viewer.locator("#areas .area-edit select").select_option(label="Highlight 1")
     assert viewer.evaluate("slide.areas.map(area => area.name)") == ["Highlight 1"]
     assert len(areas()[0]) == 3  # apart, the two keep their rings
