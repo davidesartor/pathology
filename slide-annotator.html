@@ -125,6 +125,11 @@
   .choices button { display: flex; align-items: center; gap: 6px; text-align: left; overflow: hidden; }
   .choices kbd { color: var(--faint); font: inherit; }
   .stats { white-space: pre-line; font-variant-numeric: tabular-nums; }
+  .per-roi { margin-top: 6px; overflow-x: auto; }
+  .per-roi table { width: 100%; border-spacing: 0; font-size: 12px; font-variant-numeric: tabular-nums; color: var(--muted); }
+  .per-roi td { padding: 1px 0 1px 10px; text-align: right; white-space: nowrap; }
+  .per-roi td:first-child { min-width: 110px; padding-left: 0; text-align: left; white-space: normal; position: sticky; left: 0; background: var(--panel); }
+  .per-roi tr:first-child td { color: var(--fg); font-weight: 500; }
   #areas:not(:empty)::before { content: "Measurements"; display: block; margin: 16px 0 6px; font-size: 11px; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
   .area { display: flex; align-items: center; gap: 4px; padding: 1px 0; }
   .area input[type=text] { flex: 1; min-width: 0; background: none; border: 1px solid transparent; border-radius: 6px; padding: 2px 5px; }
@@ -2236,43 +2241,89 @@ function shownRegions(from = layers) {
   return regionCache;
 }
 
-// each nucleus class's count inside the shown regions (all of it if none), cached until either changes
+// the shown regions one by one: each ring at an even depth, less the exclusion zones just inside it, numbered in order
 const ringArea = ring => Math.abs(ring.reduce((sum, [x0, y0], i) => sum + x0 * ring[(i + 1) % ring.length][1] - ring[(i + 1) % ring.length][0] * y0, 0)) / 2;
+function regionList({rings, depths}) {
+  const regions = [];
+  for (const [i, ring] of rings.entries()) if (depths[i] % 2 === 0) {
+    const holes = rings.filter((hole, j) => depths[j] === depths[i] + 1 && pointInPolygon(hole[0], ring));
+    regions.push({ring, number: regions.length + 1, area: ringArea(ring) - holes.reduce((sum, hole) => sum + ringArea(hole), 0)});
+  }
+  return regions;
+}
+
+// each nucleus class's count inside the shown regions (all of it if none), in all and per region, cached until either changes
 function insideCounts(layer) {
   const nuclei = [...layer.classes.values()].filter(cls => cls.detection && !cls.halo);
   const {rings, depths} = shownRegions();
   const key = `${nuclei.map(cls => cls.count)}|${hashText(JSON.stringify(rings))}`;
   if (layer.inside?.key === key) return layer.inside;
 
-  // even-odd nesting as in detection: odd depths are exclusion zones, checked against each ring's box first
+  // even-odd nesting as in detection: a nucleus is in the region of the deepest ring about it, unless that is an exclusion zone;
+  // each ring's box is checked first
+  const regions = regionList({rings, depths});
+  const regionOf = rings.map(ring => regions.findIndex(region => region.ring === ring));
   const boxes = rings.map(ring => { const xs = ring.map(point => point[0]), ys = ring.map(point => point[1]); return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)]; });
-  const inside = (x, y) => {
-    let deepest = -1;
+  const regionAt = (x, y) => {
+    let deepest = -1, region = -1;
     for (const [i, [x0, y0, x1, y1]] of boxes.entries())
-      if (depths[i] > deepest && x >= x0 && x <= x1 && y >= y0 && y <= y1 && pointInPolygon([x, y], rings[i])) deepest = depths[i];
-    return deepest >= 0 && deepest % 2 === 0;
+      if (depths[i] > deepest && x >= x0 && x <= x1 && y >= y0 && y <= y1 && pointInPolygon([x, y], rings[i])) [deepest, region] = [depths[i], regionOf[i]];
+    return region;
   };
-  const countInside = cls => { let total = 0; for (let i = 0; i < cls.centres.length; i += 2) total += inside(cls.centres[i], cls.centres[i + 1]); return total; };
+  const countPerRegion = cls => {
+    const perRegion = new Array(regions.length).fill(0);
+    for (let i = 0; i < cls.centres.length; i += 2) { const region = regionAt(cls.centres[i], cls.centres[i + 1]); if (region >= 0) perRegion[region]++; }
+    return perRegion;
+  };
 
-  const mpp = layer.slide?.mpp;
-  const areaMm2 = rings.length && mpp ? rings.reduce((sum, ring, i) => sum + (depths[i] % 2 ? -1 : 1) * ringArea(ring), 0) * (mpp / 1000) ** 2 : null;
-  const counts = new Map(nuclei.map(cls => [cls, rings.length ? countInside(cls) : cls.count]));
-  return layer.inside = {key, counts, areaMm2, inROI: rings.length > 0};
+  const mmPerPx = layer.slide?.mpp ? layer.slide.mpp / 1000 : null;
+  const perRegion = new Map(nuclei.map(cls => [cls, rings.length ? countPerRegion(cls) : []]));
+  const counts = new Map(nuclei.map(cls => [cls, rings.length ? perRegion.get(cls).reduce((sum, count) => sum + count, 0) : cls.count]));
+  const areaMm2 = regions.length && mmPerPx ? regions.reduce((sum, region) => sum + region.area, 0) * mmPerPx ** 2 : null;
+  const byRegion = regions.map((region, r) => ({
+    number: region.number, areaMm2: mmPerPx ? region.area * mmPerPx ** 2 : null, counts: new Map(nuclei.map(cls => [cls, perRegion.get(cls)[r]])),
+  }));
+  return layer.inside = {key, counts, areaMm2, inROI: rings.length > 0, byRegion};
 }
 
-// lymphocytes / (lymphocytes + tumor cells), lymphocytes / all nuclei and lymphocytes per mm², over the nuclei inside the shown regions
+// lymphocytes / (lymphocytes + tumor cells), lymphocytes / all nuclei and lymphocytes per mm², over the given nuclei counts
 const LYMPHOCYTE = /^(lymphocytes?|inflammatory)$/i, TUMOR = /^(tumou?r|neoplastic)$/i;
-function lymphocyteStats(layer) {
-  const {counts, areaMm2, inROI} = insideCounts(layer);
+function lymphocyteStats(counts, areaMm2) {
   const nuclei = [...counts.keys()];
   const lymphocytes = nuclei.filter(cls => LYMPHOCYTE.test(cls.name)), tumor = nuclei.filter(cls => TUMOR.test(cls.name));
   if (!lymphocytes.length) return null;
   const sum = classes => classes.reduce((total, cls) => total + counts.get(cls), 0);
-  return {lymphocyteName: lymphocytes[0].name, tumorName: tumor[0]?.name, lymphocytes: sum(lymphocytes), tumor: sum(tumor), total: sum(nuclei), areaMm2, inROI};
+  return {lymphocyteName: lymphocytes[0].name, tumorName: tumor[0]?.name, lymphocytes: sum(lymphocytes), tumor: sum(tumor), total: sum(nuclei), areaMm2};
 }
 
-function statsNote(stats) {
-  const {lymphocyteName: l, tumorName: t, lymphocytes, tumor, total, areaMm2, inROI} = stats;
+// with two or more regions shown, a table of each one's counts, area and lymphocyte figures, a column per region
+function regionTable(byRegion) {
+  const table = document.createElement("table");
+  const row = (heading, cells, title) => {
+    const tr = table.insertRow();
+    tr.insertCell().textContent = heading;
+    if (title) tr.title = title;
+    for (const cell of cells) tr.insertCell().textContent = cell;
+  };
+  const percent = (part, whole) => whole ? `${(100 * part / whole).toFixed(1)}%` : "–";
+  row("ROI", byRegion.map(region => region.number), "numbered as on the slide");
+  for (const cls of byRegion[0].counts.keys()) row(cls.name, byRegion.map(region => region.counts.get(cls).toLocaleString()));
+  if (byRegion[0].areaMm2 !== null) row("mm²", byRegion.map(region => region.areaMm2.toFixed(2)), "area, less its exclusion zones");
+  const stats = byRegion.map(region => lymphocyteStats(region.counts, region.areaMm2));
+  if (stats[0]) {
+    const {lymphocyteName: l, tumorName: t} = stats[0];
+    if (t) row(`${l} / (${l} + ${t})`, stats.map(stat => percent(stat.lymphocytes, stat.lymphocytes + stat.tumor)));
+    row(`${l} / all`, stats.map(stat => percent(stat.lymphocytes, stat.total)), `${l} / all nuclei`);
+    if (stats[0].areaMm2 !== null) row(`${l} per mm²`, stats.map(stat => stat.areaMm2 ? Math.round(stat.lymphocytes / stat.areaMm2).toLocaleString() : "–"));
+  }
+  const wrapper = document.createElement("div");
+  wrapper.className = "per-roi";
+  wrapper.append(table);
+  return wrapper;
+}
+
+function statsNote(stats, inROI) {
+  const {lymphocyteName: l, tumorName: t, lymphocytes, tumor, total, areaMm2} = stats;
   const lines = [];
   if (t && lymphocytes + tumor) lines.push(`${l} / (${l} + ${t}): ${(100 * lymphocytes / (lymphocytes + tumor)).toFixed(1)}%`);
   if (total) lines.push(`${l} / all nuclei: ${(100 * lymphocytes / total).toFixed(1)}%`);
@@ -2446,8 +2497,10 @@ function renderLayers() {
       save.addEventListener("click", () => saveLabels(layer));
       $("layers").append(save);
     }
-    const stats = lymphocyteStats(layer);
-    if (stats) $("layers").append(statsNote(stats));
+    const {areaMm2, byRegion} = insideCounts(layer);
+    const stats = lymphocyteStats(counts, areaMm2);
+    if (stats) $("layers").append(statsNote(stats, inROI));
+    if (byRegion.length > 1 && counts.size) $("layers").append(regionTable(byRegion));
   }
   $("drop-hint").hidden = layers.length > 0;
   $("save-roi").disabled = !layers.some(layer => layer.drawn?.length);
@@ -3463,6 +3516,20 @@ function outlinedText(ctx, text, x, y, color, size) {
   ctx.fillText(text, x, y);
 }
 
+// with two or more regions shown, each one's number above its topmost corner, matching the columns of the per-ROI table
+function drawRegionNumbers(ctx, layerList, toOutput, size) {
+  const regions = regionList(shownRegions(layerList));
+  if (regions.length < 2) return;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.lineJoin = "round";
+  Object.assign(ctx, {font: `600 ${14 * size}px system-ui, sans-serif`, textAlign: "center", textBaseline: "bottom"});
+  for (const {ring, number} of regions) {
+    const top = ring.map(([x, y]) => toOutput.transformPoint({x, y})).reduce((best, point) => point.y < best.y ? point : best);
+    outlinedText(ctx, String(number), top.x, top.y - 5 * size, "white", size);
+  }
+  Object.assign(ctx, {textAlign: "start", textBaseline: "alphabetic"});
+}
+
 // each measurement as a line with end ticks, its length (after its name, if any) beside its middle; `size` output px per screen px
 function drawMeasurements(ctx, fromSlide, lines, toOutput, size) {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -3595,6 +3662,7 @@ async function renderCapture(fromSlide, captureLayers, ring, turn, screenScale, 
   // the layers and measurements as on screen, but never thinner than at 1 screen px per output px
   const size = Math.max(1, 1 / (screenScale * downsample));  // output px per screen px
   drawCaptureLayers(context, captureLayers, toImagePx, 1 / (downsample * size));
+  drawRegionNumbers(context, captureLayers, toImagePx, size);
   drawMeasurements(context, fromSlide, fromSlide.areas, toImagePx, size);
   context.restore();
   drawCaption(context, fromSlide, canvas.width, canvas.height, downsample, caption);
@@ -3843,6 +3911,7 @@ function drawPane(pane) {
   const toDevice = new DOMMatrix([(alongX.x - origin.x) * dpr, (alongX.y - origin.y) * dpr, (alongY.x - origin.x) * dpr, (alongY.y - origin.y) * dpr, origin.x * dpr, origin.y * dpr]);
   ctx.setTransform(toDevice);
   drawLayers(pane, layers, scale, topLeft, bottomRight);
+  drawRegionNumbers(ctx, layers, toDevice, dpr);
   drawMeasurements(ctx, slide, slide.areas, toDevice, dpr);
   if (measuring && measureStart && pointer && viewer === panes[0].viewer) drawMeasurements(ctx, slide, [{color: LINE_COLOR, ring: [measureStart, pointer]}], toDevice, dpr);
   if (eyepiece.field && !capturing) drawField(ctx, dpr, width, height);
