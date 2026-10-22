@@ -149,6 +149,24 @@ def test_fingers_pan_while_measuring_and_only_the_pen_draws_once_used(app: Page,
     def pen(kind, x, y):
         cdp.send("Input.dispatchMouseEvent", {"type": kind, "x": x, "y": y, "button": "left", "buttons": 0 if kind == "mouseReleased" else 1, "clickCount": 1, "pointerType": "pen"})
 
+    # a pencil's touches are cancelled, or iPadOS takes them for Scribble; a pen press it cancels leaves fingers drawing
+    assert app.evaluate("""() => {
+        const touch = Object.defineProperty(new Touch({identifier: 9, target: viewer.canvas, clientX: 300, clientY: 300}), "touchType", {value: "stylus"});  // Chrome has no touchType
+        const event = new TouchEvent("touchstart", {touches: [touch], changedTouches: [touch], cancelable: true, bubbles: true});
+        viewer.canvas.dispatchEvent(event);
+        return event.defaultPrevented;
+    }""")
+    app.evaluate("""() => {
+        viewer.container.dispatchEvent(new PointerEvent("pointerdown", {pointerType: "pen", pointerId: 9, bubbles: true}));
+        window.dispatchEvent(new PointerEvent("pointercancel", {pointerType: "pen", pointerId: 9}));
+    }""")
+    touch("touchStart", (0, (300, 300)))
+    for step in range(1, 11):
+        touch("touchMove", (0, (300 + 10 * step, 300)))
+    touch("touchEnd")
+    assert len(app.evaluate("slide.areas")) == 1
+    app.click("#measure-undo")
+
     app.evaluate("viewer.viewport.zoomTo(viewer.viewport.imageToViewportZoom(1), null, true)")  # the pinch zoomed a little
     centre = app.evaluate("viewer.viewport.getCenter(true)")
     pen("mousePressed", 300, 500)
@@ -161,6 +179,14 @@ def test_fingers_pan_while_measuring_and_only_the_pen_draws_once_used(app: Page,
     assert app.evaluate("viewer.viewport.getCenter(true)") == centre
     [line] = app.evaluate("slide.areas")
     assert abs(np.hypot(*np.diff(line["ring"], axis=0)[0]) - 200) <= 1
+
+    # the pen has drawn, so one finger now pans
+    touch("touchStart", (0, (300, 300)))
+    for step in range(1, 11):
+        touch("touchMove", (0, (300 + 20 * step, 300)))
+    touch("touchEnd")
+    assert app.evaluate("viewer.viewport.getCenter(true).x") < centre["x"]
+    assert len(app.evaluate("slide.areas")) == 1
 
 
 def test_microscope_field_sets_magnification(app: Page, tiffs):

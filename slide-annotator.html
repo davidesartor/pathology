@@ -2948,25 +2948,27 @@ function toolGestures() {
 // Once a pen has been used, only the pen draws and fingers pan and pinch, so a palm resting on the screen leaves no marks, and moves nothing while the pen is down
 const fingers = new Set();
 let penSeen = false, penDown = false;
-const fingerOnly = event => penSeen && event.pointerType === "touch";
+const fingerOnly = event => (penSeen || penDown) && event.pointerType === "touch";
 viewer.container.addEventListener("pointerdown", event => {
-  if (event.pointerType === "pen") {
-    penDown = true;
-    if (!penSeen) {
-      penSeen = true;
-      toolGestures();
-    }
-  }
+  if (event.pointerType === "pen") penDown = true;
   if (event.pointerType !== "touch") return;
   fingers.add(event.pointerId);
   if (fingers.size === 2 && !penSeen) dropPress();
 }, true);
 for (const type of ["pointerup", "pointercancel"]) {
   window.addEventListener(type, event => {
+    // a pen press counts once it ends on its own, not cancelled by iPadOS, so a pen that never drew leaves fingers drawing
+    if (event.pointerType === "pen" && penDown && type === "pointerup" && !penSeen) {
+      penSeen = true;
+      toolGestures();
+    }
     if (event.pointerType === "pen") penDown = false;
     fingers.delete(event.pointerId);
   }, true);
 }
+// iPadOS takes a pencil's touches for Scribble, text selection or a double-tap zoom unless they are cancelled; OSD listens only to pointer events
+viewer.container.addEventListener("touchstart", event => { if ([...event.changedTouches].some(touch => touch.touchType === "stylus")) event.preventDefault(); }, {passive: false});
+viewer.container.addEventListener("touchmove", event => { if ([...event.touches].some(touch => touch.touchType === "stylus")) event.preventDefault(); }, {passive: false});
 for (const type of ["canvas-drag", "canvas-drag-end"]) viewer.addHandler(type, event => { if (penDown && event.pointerType === "touch") event.preventDefaultAction = true; });
 viewer.addHandler("canvas-pinch", event => { if (penDown) event.preventDefaultPanAction = event.preventDefaultZoomAction = true; });
 function dropPress() {
