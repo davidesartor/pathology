@@ -188,6 +188,25 @@ def test_fingers_pan_while_measuring_and_only_the_pen_draws_once_used(app: Page,
     assert app.evaluate("viewer.viewport.getCenter(true).x") < centre["x"]
     assert len(app.evaluate("slide.areas")) == 1
 
+    # the Fingers draw switch shows it turned off; switched back on by hand, it stays on through later pen strokes
+    switch = "document.querySelector('#fingers-draw, [data-part=fingers-draw]')"
+    assert not app.evaluate(f"{switch}.checked")
+    app.evaluate(f"{switch}.click()")
+    pen("mousePressed", 300, 500)
+    pen("mouseMoved", 400, 500)
+    pen("mouseReleased", 400, 500)
+    assert len(app.evaluate("slide.areas")) == 2
+    touch("touchStart", (0, (300, 300)))
+    for step in range(1, 11):
+        touch("touchMove", (0, (300 + 10 * step, 300)))
+    touch("touchEnd")
+    assert len(app.evaluate("slide.areas")) == 3
+    assert app.evaluate(f"{switch}.checked")
+
+    # a page cannot tell whether the pencil is still connected, so fingers draw again at the next visit
+    app.reload()
+    assert app.evaluate(f"{switch}.checked")
+
 
 def test_microscope_field_sets_magnification(app: Page, tiffs):
     """With the field on, 40× through a 10×/22 eyepiece shows a 0.55 mm circle, the slide dimmed outside it."""

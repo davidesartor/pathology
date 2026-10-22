@@ -106,6 +106,8 @@
   .area-edit input[type=color] { width: 40px; height: 22px; padding: 0; border: 1px solid var(--line); border-radius: 5px; background: none; cursor: pointer; }
   .brush { display: flex; align-items: center; gap: 8px; margin: 8px 0 4px; color: var(--muted); font-size: 12px; }
   .brush input { flex: 1; }
+  .fingers-draw { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 12px; cursor: pointer; }
+  .fingers-draw input { margin: 0; }
   [data-part=highlight-mode] { margin-bottom: 8px; }
   .area-edit { display: flex; flex-direction: column; gap: 6px; margin: 2px 0 6px 24px; padding: 8px; border: 1px solid var(--line); border-radius: 8px; color: var(--muted); font-size: 12px; }
   .area-edit label { display: grid; grid-template-columns: 40px minmax(0, 1fr) 44px; align-items: center; gap: 8px; white-space: nowrap; }
@@ -245,15 +247,16 @@
         <h3>Highlight</h3>
         <div class="seg" data-part="highlight-mode"><button data-value="outline" title="draw each highlight's outline">Outline</button><button data-value="paint" title="paint highlights with a brush">Paint</button><button data-value="erase" title="erase parts of the highlights with a brush">Erase</button></div>
         <label class="brush" data-part="brush" title="the brush's width on screen">brush <input data-part="brush-size" type="range" min="10" max="200" step="1"></label>
-        <p class="note" data-part="outline-help">Drag to outline an area, or click to place corners. Close with Enter, a double-click or a click on the first corner. Backspace undoes, Esc cancels. Two fingers pan, pinch zooms; once a pencil is used, only it draws and one finger pans.</p>
-        <p class="note" data-part="paint-help">Drag to paint; a stroke adds to the highlight it touches, else starts a new one, and a gap left inside one is a hole. Zoom in for finer edges. Backspace undoes, Esc stops. Two fingers pan, pinch zooms; once a pencil is used, only it draws and one finger pans.</p>
+        <p class="note" data-part="outline-help">Drag to outline an area, or click to place corners. Close with Enter, a double-click or a click on the first corner. Backspace undoes, Esc cancels. Two fingers pan, pinch zooms.</p>
+        <p class="note" data-part="paint-help">Drag to paint; a stroke adds to the highlight it touches, else starts a new one, and a gap left inside one is a hole. Zoom in for finer edges. Backspace undoes, Esc stops. Two fingers pan, pinch zooms.</p>
         <div class="buttons"><button data-part="highlight-undo" title="undo the last change; Backspace also does">Undo</button></div>
       </div>
       <div data-part="measure-help" hidden>
         <h3>Measure</h3>
-        <p class="note">Drag a line, or click its two ends. Shift keeps it level or upright. Backspace undoes, Esc stops. Two fingers pan, pinch zooms; once a pencil is used, only it draws and one finger pans.</p>
+        <p class="note">Drag a line, or click its two ends. Shift keeps it level or upright. Backspace undoes, Esc stops. Two fingers pan, pinch zooms.</p>
         <div class="buttons"><button data-part="measure-undo" title="undo the last change; Backspace also does">Undo</button></div>
       </div>
+      <label class="fingers-draw" data-part="fingers-draw-row" title="turns off once a pencil has drawn: then only the pencil draws, one finger pans and a palm resting on the screen is ignored" hidden><input data-part="fingers-draw" type="checkbox" checked>Fingers draw</label>
       <div data-part="capture-settings" hidden>
         <h3>Capture</h3>
         <p class="note">Drag the frame to move it and its corners to resize it, or type its size; drag outside it to pan. Enter saves, Esc closes.</p>
@@ -1176,7 +1179,13 @@ const panes = [];
 let split = false;
 let linked = false;  // side by side, the pane under the pointer leads and the other follows it frame by frame
 let activePane = null;  // the pane last pointed at: it leads linked views, and opened or dropped slides go to it
-let penSeen = false;  // once a pen has touched a slide, only the pen draws; fingers pan and pinch
+// with Fingers draw off, only a pen draws and fingers pan and pinch; it turns off after the first pen stroke unless chosen by hand.
+// A web page cannot tell whether the pencil is still connected, so it starts on at every visit
+let fingersDraw = true, fingersDrawChosen = false;
+function setFingersDraw(on) {
+  fingersDraw = on;
+  panes.forEach(pane => pane.toolGestures());
+}
 const follow = (source, target) => {
   target.viewport.setFlip(source.viewport.getFlip());
   if (target.viewport.getRotation(true) !== source.viewport.getRotation(true)) target.viewport.setRotation(source.viewport.getRotation(true), true);
@@ -1504,29 +1513,32 @@ function createPane(index) {
     for (const settings of [viewer.gestureSettingsMouse, viewer.gestureSettingsTouch, viewer.gestureSettingsPen]) settings.dragToPan = settings.clickToZoom = !on;
     // a double tap would zoom as it closes an outline, and a tap then a drag would zoom instead of tracing
     viewer.gestureSettingsTouch.dblClickToZoom = viewer.gestureSettingsTouch.dblClickDragToZoom = !on;
-    if (penSeen) viewer.gestureSettingsTouch.dragToPan = true;
+    if (!fingersDraw) viewer.gestureSettingsTouch.dragToPan = true;
+    part("fingers-draw").checked = fingersDraw;
+    part("fingers-draw-row").hidden = !on || !navigator.maxTouchPoints;
     viewer.canvas.style.cursor = on ? "crosshair" : "";
   }
   pane.toolGestures = () => setToolGestures(drawing || measuring);
+  part("fingers-draw").addEventListener("change", event => {
+    fingersDrawChosen = true;
+    setFingersDraw(event.target.checked);
+  });
 
   // a second finger turns a press into a pinch, which pans and zooms: the stroke, traced corners or line end the press began are dropped.
-  // Once a pen has been used, fingers never draw, so a palm resting on the screen leaves no marks, and moves nothing while the pen is down
+  // with Fingers draw off, a palm resting on the screen leaves no marks; nor does it, or move anything, while the pen is down
   const fingers = new Set();
   let penDown = false;
-  const fingerOnly = event => (penSeen || penDown) && event.pointerType === "touch";
+  const fingerOnly = event => (!fingersDraw || penDown) && event.pointerType === "touch";
   viewer.container.addEventListener("pointerdown", event => {
     if (event.pointerType === "pen") penDown = true;
     if (event.pointerType !== "touch") return;
     fingers.add(event.pointerId);
-    if (fingers.size === 2 && !penSeen) dropPress();
+    if (fingers.size === 2 && fingersDraw) dropPress();
   }, true);
   for (const type of ["pointerup", "pointercancel"]) {
     window.addEventListener(type, event => {
       // a pen press counts once it ends on its own, not cancelled by iPadOS, so a pen that never drew leaves fingers drawing
-      if (event.pointerType === "pen" && penDown && type === "pointerup" && !penSeen) {
-        penSeen = true;
-        panes.forEach(other => other.toolGestures());
-      }
+      if (event.pointerType === "pen" && penDown && type === "pointerup" && !fingersDrawChosen) setFingersDraw(false);
       if (event.pointerType === "pen") penDown = false;
       fingers.delete(event.pointerId);
     }, true);
