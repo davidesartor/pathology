@@ -4139,7 +4139,7 @@ async function modelSession(checkpoint) {
     externalData: [{path: "weights.bin", data: new Uint8Array(weights)}],
     graphOptimizationLevel: "all",
   });
-  session = Object.assign(created, {checkpoint, gpu: !!adapter, gpuVendor: adapter?.info?.vendor, head: head && new Float32Array(head)});
+  session = Object.assign(created, {checkpoint, gpu: !!adapter, half, gpuVendor: adapter?.info?.vendor, head: head && new Float32Array(head)});
   return session;
 }
 
@@ -4284,7 +4284,7 @@ async function detectNuclei({layer, slide: forSlide, checkpoint, model, views, r
     const elapsed = (performance.now() - started) / 1000, left = tilesDone ? elapsed / tilesDone * (tilesToDo - tilesDone) : NaN;
     const percent = Math.floor(100 * tilesDone / tilesToDo);
     if (percent !== detection.percent) { detection.percent = percent; renderTabs(); }
-    setModelStatus(`${forSlide.name}: block ${index + 1} of ${blocks.length}, ${percent}% done${tilesDone ? `, about ${duration(left)} left` : ""}. Keep this browser tab open.${queue.length ? ` ${queue.length} more queued.` : ""}${session?.gpu === false ? " This browser has no WebGPU, so the model runs on the processor and is very slow: use a recent Chrome, Edge or Safari." : ""}`);
+    setModelStatus(`${forSlide.name}: block ${index + 1} of ${blocks.length}, ${percent}% done${tilesDone ? `, about ${duration(left)} left (${(tilesDone / elapsed).toFixed(1)} tiles/s, ${session?.half ? "float16" : "float32"})` : ""}. Keep this browser tab open.${queue.length ? ` ${queue.length} more queued.` : ""}${session?.gpu === false ? " This browser has no WebGPU, so the model runs on the processor and is very slow: use a recent Chrome, Edge or Safari." : ""}`);
   };
   try {
     const {head} = await modelSession(checkpoint);
