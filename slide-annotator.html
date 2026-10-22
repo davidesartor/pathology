@@ -99,6 +99,7 @@
   #toolopts { border-color: var(--accent); background: rgba(53, 194, 189, 0.05); }
   #toolopts .note { margin: 0; }
   #roi-mode { margin-bottom: 6px; }
+  #fingers-draw-row { margin-top: 8px; font-size: 12px; }
   #brush { margin-bottom: 4px; color: var(--muted); font-size: 12px; }
   #side label { display: flex; align-items: center; gap: 8px; padding: 2px 0; cursor: pointer; }
   #side label input[type=checkbox] { margin: 0; }
@@ -270,15 +271,16 @@
         <h3>Draw ROI</h3>
         <div class="seg" id="roi-mode"><button data-value="outline" title="draw each ROI's outline">Outline</button><button data-value="paint" title="paint ROIs with a brush">Paint</button><button data-value="erase" title="erase parts of the ROIs with a brush">Erase</button></div>
         <label id="brush" title="the brush's width on screen">brush <input id="brush-size" type="range" min="10" max="200" step="1"></label>
-        <p class="note" id="outline-help">Click to place corners, or hold and drag to trace. Close with Enter, a double-click or a click on the first corner. A shape drawn inside another is an exclusion zone. Backspace undoes, Esc cancels. Two fingers pan, pinch zooms; once a pencil is used, only it draws and one finger pans.</p>
-        <p class="note" id="paint-help">Drag to paint; a stroke joins the ROIs it touches, and a gap left inside one is an exclusion zone. Zoom in for finer edges. Backspace undoes, Esc stops. Two fingers pan, pinch zooms; once a pencil is used, only it draws and one finger pans.</p>
+        <p class="note" id="outline-help">Click to place corners, or hold and drag to trace. Close with Enter, a double-click or a click on the first corner. A shape drawn inside another is an exclusion zone. Backspace undoes, Esc cancels. Two fingers pan, pinch zooms.</p>
+        <p class="note" id="paint-help">Drag to paint; a stroke joins the ROIs it touches, and a gap left inside one is an exclusion zone. Zoom in for finer edges. Backspace undoes, Esc stops. Two fingers pan, pinch zooms.</p>
         <div class="buttons"><button id="roi-undo" title="undo the last change; Backspace also does">Undo</button></div>
       </div>
       <div id="measure-help" hidden>
         <h3>Measure</h3>
-        <p class="note">Drag a line, or click its two ends. Shift keeps it level or upright. Backspace undoes, Esc stops. Two fingers pan, pinch zooms; once a pencil is used, only it draws and one finger pans.</p>
+        <p class="note">Drag a line, or click its two ends. Shift keeps it level or upright. Backspace undoes, Esc stops. Two fingers pan, pinch zooms.</p>
         <div class="buttons"><button id="measure-undo" title="undo the last change; Backspace also does">Undo</button></div>
       </div>
+      <label id="fingers-draw-row" title="turns off once a pencil has drawn: then only the pencil draws, one finger pans and a palm resting on the screen is ignored" hidden><input id="fingers-draw" type="checkbox">Fingers draw</label>
       <div id="capture-settings" hidden>
         <h3>Capture</h3>
         <p class="note">Drag the frame to move it and its corners to resize it, or type its size; drag outside it to pan. Enter saves, Esc closes.</p>
@@ -2924,6 +2926,7 @@ function setTool(tool) {
   $("toolopts").hidden = !tool;
   $("draw-help").hidden = !drawing;
   $("measure-help").hidden = !measuring;
+  $("fingers-draw-row").hidden = !(drawing || measuring) || !navigator.maxTouchPoints;
   $("capture-settings").hidden = !capturing;
   viewer.navigator.element.parentElement.style.display = capturing ? "none" : "inline-block";  // it would cover the frame's corner
   // the tool's options are in the sidebar; opening it narrows the slide, so the frame is placed again once it has.
@@ -2941,27 +2944,34 @@ function toolGestures() {
   for (const settings of [viewer.gestureSettingsMouse, viewer.gestureSettingsTouch, viewer.gestureSettingsPen]) settings.dragToPan = settings.clickToZoom = !on;
   // a double tap would zoom as it closes an outline, and a tap then a drag would zoom instead of tracing
   viewer.gestureSettingsTouch.dblClickToZoom = viewer.gestureSettingsTouch.dblClickDragToZoom = !on;
-  if (penSeen) viewer.gestureSettingsTouch.dragToPan = true;
+  if (!fingersDraw) viewer.gestureSettingsTouch.dragToPan = true;
 }
 
 // a second finger turns a press into a pinch, which pans and zooms: the stroke, traced corners or line end the press began are dropped.
-// Once a pen has been used, only the pen draws and fingers pan and pinch, so a palm resting on the screen leaves no marks, and moves nothing while the pen is down
+// With Fingers draw off, only a pen draws and fingers pan and pinch, so a palm resting on the screen leaves no marks; nor does it while the pen is down.
+// It turns off after the first pen stroke unless chosen by hand. A web page cannot tell whether the pencil is still connected, so it starts on at every visit
 const fingers = new Set();
-let penSeen = false, penDown = false;
-const fingerOnly = event => (penSeen || penDown) && event.pointerType === "touch";
+let fingersDraw = true, fingersDrawChosen = false, penDown = false;
+const fingerOnly = event => (!fingersDraw || penDown) && event.pointerType === "touch";
+function setFingersDraw(on) {
+  fingersDraw = $("fingers-draw").checked = on;
+  toolGestures();
+}
+$("fingers-draw").checked = fingersDraw;
+$("fingers-draw").addEventListener("change", event => {
+  fingersDrawChosen = true;
+  setFingersDraw(event.target.checked);
+});
 viewer.container.addEventListener("pointerdown", event => {
   if (event.pointerType === "pen") penDown = true;
   if (event.pointerType !== "touch") return;
   fingers.add(event.pointerId);
-  if (fingers.size === 2 && !penSeen) dropPress();
+  if (fingers.size === 2 && fingersDraw) dropPress();
 }, true);
 for (const type of ["pointerup", "pointercancel"]) {
   window.addEventListener(type, event => {
     // a pen press counts once it ends on its own, not cancelled by iPadOS, so a pen that never drew leaves fingers drawing
-    if (event.pointerType === "pen" && penDown && type === "pointerup" && !penSeen) {
-      penSeen = true;
-      toolGestures();
-    }
+    if (event.pointerType === "pen" && penDown && type === "pointerup" && !fingersDrawChosen) setFingersDraw(false);
     if (event.pointerType === "pen") penDown = false;
     fingers.delete(event.pointerId);
   }, true);
