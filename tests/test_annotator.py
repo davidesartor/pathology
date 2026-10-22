@@ -81,6 +81,15 @@ def test_counts_inside_rois(annotator: Page, tiffs, nuclei, rois):
         "counted inside the ROIs and annotations shown",
     ]
 
+    # each ROI counted on its own, the hole left out of the first
+    per_roi = {name: [int((inside(OUTER, *c.T) & ~inside(HOLE, *c.T)).sum()), int(inside(SECOND, *c.T).sum())] for name, c in centres.items()}
+    rows = annotator.evaluate("[...$('layers').querySelectorAll('.per-roi tr')].map(tr => [...tr.cells].map(cell => cell.textContent))")
+    table = {row[0]: row[1:] for row in rows}
+    assert table["ROI"] == ["1", "2"]
+    assert {name: [int(count.replace(",", "")) for count in table[name]] for name in centres} == per_roi
+    assert table["mm²"] == [f"{(3000 ** 2 - 500 ** 2) * (0.25 / 1000) ** 2:.2f}", f"{1000 ** 2 * (0.25 / 1000) ** 2:.2f}"]
+    assert table["Lymphocyte / (Lymphocyte + Tumor)"] == [f"{100 * l / (l + t):.1f}%" for l, t in zip(per_roi["Lymphocyte"], per_roi["Tumor"])]
+
 
 def test_rois_save_as_loaded(annotator: Page, tiffs, rois):
     open_files(annotator, tiffs["ome_zlib"][0])
