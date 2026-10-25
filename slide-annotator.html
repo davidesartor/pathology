@@ -2734,6 +2734,22 @@ function applyStroke({points, radius, erase}) {
     regions.closePath();
   }
   ctx.fill(regions, "evenodd");
+  const before = ctx.getImageData(0, 0, width, height).data;
+  layStroke(ctx, {points, radius, erase});
+  const data = ctx.getImageData(0, 0, width, height).data;
+  if (!maskChanged(before, data)) return;  // e.g. erasing within an exclusion zone
+
+  // traced rings back in slide px, mask px values standing at their centres; specks under a few mask px are dropped
+  const traced = traceMask(data, width, height)
+    .filter(ring => ringArea(ring) >= 2)
+    .map(ring => simplifyRing(ring, 0.4).map(([x, y]) => [Math.round(left + (x + 0.5) * cell), Math.round(top + (y + 0.5) * cell)]))
+    .filter(ring => ring.length >= 4);
+  const kept = keepUntouched(traced, [...taken].map(i => layer.drawn[i]), {points, radius}, cell);
+  changeDrawn(layer, [...layer.drawn.filter((ring, i) => !taken.has(i)), ...kept]);
+}
+
+// a brush stroke {points, radius, erase} in slide px, laid on a mask
+function layStroke(ctx, {points, radius, erase}) {
   ctx.globalCompositeOperation = erase ? "destination-out" : "source-over";
   ctx.beginPath();
   if (points.length === 1) {
@@ -2744,13 +2760,34 @@ function applyStroke({points, radius, erase}) {
     Object.assign(ctx, {lineWidth: 2 * radius, lineCap: "round", lineJoin: "round"});
     ctx.stroke();
   }
+}
 
-  // traced rings back in slide px, mask px values standing at their centres; specks under a few mask px are dropped
-  const traced = traceMask(ctx.getImageData(0, 0, width, height).data, width, height)
-    .filter(ring => ringArea(ring) >= 2)
-    .map(ring => simplifyRing(ring, 0.4).map(([x, y]) => [Math.round(left + (x + 0.5) * cell), Math.round(top + (y + 0.5) * cell)]))
-    .filter(ring => ring.length >= 4);
-  changeDrawn(layer, [...layer.drawn.filter((ring, i) => !taken.has(i)), ...traced]);
+// whether any mask px crossed half opacity, which is where rings are traced
+function maskChanged(before, after) {
+  for (let i = 3; i < after.length; i += 4) if ((before[i] >= 128) !== (after[i] >= 128)) return true;
+  return false;
+}
+
+// the distance from `point` to a brush stroke's centre line
+function strokeDistance(points, [x, y]) {
+  let nearest = Infinity;
+  for (const [i, [ax, ay]] of points.entries()) {
+    const [bx, by] = points[i + 1] ?? points[i], dx = bx - ax, dy = by - ay;
+    const t = dx || dy ? Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / (dx * dx + dy * dy))) : 0;
+    nearest = Math.min(nearest, Math.hypot(x - ax - t * dx, y - ay - t * dy));
+  }
+  return nearest;
+}
+
+// a traced ring the stroke stayed clear of retraces a ring it left alone, which is kept as it was:
+// traced again on every stroke, a ring would drift, and shrink, by up to a mask px each time
+function keepUntouched(traced, rings, {points, radius}, cell) {
+  const reach = radius + 2 * cell, slack = 2 * cell + 1, left = rings.map(ring => ({ring, box: ringBox(ring)}));
+  return traced.map(ring => {
+    if (ring.some(point => strokeDistance(points, point) <= reach)) return ring;
+    const box = ringBox(ring), same = left.findIndex(item => item.box.every((value, i) => Math.abs(value - box[i]) <= slack));
+    return same < 0 ? ring : left.splice(same, 1)[0].ring;
+  });
 }
 
 // marching squares at half opacity: rings in mask px around the opaque parts, each edge placed between px by their opacity

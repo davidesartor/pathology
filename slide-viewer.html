@@ -853,8 +853,8 @@ const ringArea = ring => Math.abs(ring.reduce((sum, [x0, y0], i) => sum + x0 * r
 const boxesMeet = ([a0, b0, a1, b1], [x0, y0, x1, y1]) => !(a0 > x1 || a1 < x0 || b0 > y1 || b1 < y0);
 
 // each group's rings that meet `box` (grown until no more do, so holes come with their regions) are filled even-odd into a mask,
-// one group over another, `paint` is laid on it, and the mask is traced back to rings; the other rings are kept as they are
-function remask(groups, box, minCell, paint = null) {
+// one group over another, `stroke` is laid on it, and the mask is traced back to rings; the other rings are kept as they are
+function remask(groups, box, minCell, stroke = null) {
   let [x0, y0, x1, y1] = box;
   const rings = groups.flatMap((rings, group) => rings.map(ring => ({ring, group, box: ringBox(ring)}))), taken = new Set();
   for (let grew = true; grew;) {
@@ -874,31 +874,65 @@ function remask(groups, box, minCell, paint = null) {
   const ctx = Object.assign(document.createElement("canvas"), {width, height}).getContext("2d", {willReadFrequently: true});
   ctx.setTransform(1 / cell, 0, 0, 1 / cell, -left / cell, -top / cell);
   for (const group of groups.keys()) ctx.fill(ringsPath([...taken].filter(item => item.group === group).map(item => item.ring)), "evenodd");
-  paint?.(ctx);
+  const before = stroke && ctx.getImageData(0, 0, width, height).data;
+  if (stroke) layStroke(ctx, stroke);
+  const data = ctx.getImageData(0, 0, width, height).data;
+  if (stroke && !maskChanged(before, data)) return groups.flat();
 
   // traced rings back in slide px, mask px values standing at their centres; specks under a few mask px are dropped
-  const traced = traceMask(ctx.getImageData(0, 0, width, height).data, width, height)
+  const traced = traceMask(data, width, height)
     .filter(ring => ringArea(ring) >= 2)
     .map(ring => simplifyRing(ring, 0.4).map(([x, y]) => [Math.round(left + (x + 0.5) * cell), Math.round(top + (y + 0.5) * cell)]))
     .filter(ring => ring.length >= 4);
-  return [...rings.filter(item => !taken.has(item)).map(item => item.ring), ...traced];
+  return [...rings.filter(item => !taken.has(item)).map(item => item.ring), ...(stroke ? keepUntouched(traced, [...taken].map(item => item.ring), stroke, cell) : traced)];
+}
+
+// a brush stroke {points, radius, erase} in slide px, laid on a mask
+function layStroke(ctx, {points, radius, erase}) {
+  ctx.globalCompositeOperation = erase ? "destination-out" : "source-over";
+  ctx.beginPath();
+  if (points.length === 1) {
+    ctx.arc(...points[0], radius, 0, 2 * Math.PI);
+    ctx.fill();
+  } else {
+    for (const point of points) ctx.lineTo(...point);
+    Object.assign(ctx, {lineWidth: 2 * radius, lineCap: "round", lineJoin: "round"});
+    ctx.stroke();
+  }
+}
+
+// whether any mask px crossed half opacity, which is where rings are traced
+function maskChanged(before, after) {
+  for (let i = 3; i < after.length; i += 4) if ((before[i] >= 128) !== (after[i] >= 128)) return true;
+  return false;
+}
+
+// the distance from `point` to a brush stroke's centre line
+function strokeDistance(points, [x, y]) {
+  let nearest = Infinity;
+  for (const [i, [ax, ay]] of points.entries()) {
+    const [bx, by] = points[i + 1] ?? points[i], dx = bx - ax, dy = by - ay;
+    const t = dx || dy ? Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / (dx * dx + dy * dy))) : 0;
+    nearest = Math.min(nearest, Math.hypot(x - ax - t * dx, y - ay - t * dy));
+  }
+  return nearest;
+}
+
+// a traced ring the stroke stayed clear of retraces a ring it left alone, which is kept as it was:
+// traced again on every stroke, a ring would drift, and shrink, by up to a mask px each time
+function keepUntouched(traced, rings, {points, radius}, cell) {
+  const reach = radius + 2 * cell, slack = 2 * cell + 1, left = rings.map(ring => ({ring, box: ringBox(ring)}));
+  return traced.map(ring => {
+    if (ring.some(point => strokeDistance(points, point) <= reach)) return ring;
+    const box = ringBox(ring), same = left.findIndex(item => item.box.every((value, i) => Math.abs(value - box[i]) <= slack));
+    return same < 0 ? ring : left.splice(same, 1)[0].ring;
+  });
 }
 
 // a brush stroke {points, radius, erase} in slide px, laid on `rings`
-function strokeRings(rings, {points, radius, erase}) {
-  const [x0, y0, x1, y1] = ringBox(points);
-  return remask([rings], [x0 - radius, y0 - radius, x1 + radius, y1 + radius], radius / BRUSH_CELLS, ctx => {
-    ctx.globalCompositeOperation = erase ? "destination-out" : "source-over";
-    ctx.beginPath();
-    if (points.length === 1) {
-      ctx.arc(...points[0], radius, 0, 2 * Math.PI);
-      ctx.fill();
-    } else {
-      for (const point of points) ctx.lineTo(...point);
-      Object.assign(ctx, {lineWidth: 2 * radius, lineCap: "round", lineJoin: "round"});
-      ctx.stroke();
-    }
-  });
+function strokeRings(rings, stroke) {
+  const [x0, y0, x1, y1] = ringBox(stroke.points), radius = stroke.radius;
+  return remask([rings], [x0 - radius, y0 - radius, x1 + radius, y1 + radius], radius / BRUSH_CELLS, stroke);
 }
 
 // the union of two highlights' rings; rings apart from the other highlight's are kept as they are
