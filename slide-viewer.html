@@ -1543,11 +1543,41 @@ function createPane(index) {
       fingers.delete(event.pointerId);
     }, true);
   }
-  // iPadOS takes a pencil's touches for Scribble, text selection or a double-tap zoom unless they are cancelled; OSD listens only to pointer events
-  viewer.container.addEventListener("touchstart", event => { if ([...event.changedTouches].some(touch => touch.touchType === "stylus")) event.preventDefault(); }, {passive: false});
-  viewer.container.addEventListener("touchmove", event => { if ([...event.touches].some(touch => touch.touchType === "stylus")) event.preventDefault(); }, {passive: false});
-  // with its touches cancelled, the pencil's pointermoves arrive cancelled too, and OSD sends no drags for cancelled moves: only a stroke's ends would register
-  viewer.innerTracker.preProcessEventHandler = info => { if (info.eventType === "pointermove" && info.pointerType === "pen") info.defaultPrevented = false; };
+  // iPadOS takes a pencil's touches for Scribble, text selection or a double-tap zoom unless they are cancelled; OSD listens only to pointer events.
+  // With its touches cancelled, the pencil's pointermoves arrive cancelled or not at all, and OSD drags only on moves that are not cancelled,
+  // so only a stroke's ends would register: the pencil's drags on the slide come from its touches instead
+  let stylusAt = null;  // the pencil's last place on the slide, in canvas px
+  const stylusTouch = touches => [...touches].find(touch => touch.touchType === "stylus");
+  const canvasPoint = touch => {
+    const rect = viewer.canvas.getBoundingClientRect();
+    return new OpenSeadragon.Point(touch.clientX - rect.left, touch.clientY - rect.top);
+  };
+  viewer.container.addEventListener("touchstart", event => {
+    const touch = stylusTouch(event.changedTouches);
+    if (!touch) return;
+    event.preventDefault();
+    if (viewer.canvas.contains(touch.target)) stylusAt = canvasPoint(touch);
+  }, {passive: false});
+  viewer.container.addEventListener("touchmove", event => {
+    const touch = stylusTouch(event.touches);
+    if (!touch) return;
+    event.preventDefault();
+    if (!stylusAt || !penDown) return;
+    const position = canvasPoint(touch), delta = position.minus(stylusAt);
+    stylusAt = position;
+    const drag = {tracker: viewer.innerTracker, pointerType: "pen", position, delta, shift: event.shiftKey, originalEvent: event, preventDefaultAction: false};
+    viewer.raiseEvent("canvas-drag", drag);
+    if (!drag.preventDefaultAction && viewer.gestureSettingsPen.dragToPan) {
+      if (viewer.viewport.getFlip()) delta.x = -delta.x;
+      viewer.viewport.panBy(viewer.viewport.deltaPointsFromPixels(delta.negate()));
+    }
+  }, {passive: false});
+  for (const type of ["touchend", "touchcancel"]) viewer.container.addEventListener(type, event => { if (stylusTouch(event.changedTouches)) stylusAt = null; });
+  viewer.innerTracker.preProcessEventHandler = info => {
+    if (info.eventType !== "pointermove" || info.pointerType !== "pen") return;
+    if (stylusAt) info.preventGesture = true;  // drawn from the touches
+    else info.defaultPrevented = false;
+  };
   for (const type of ["canvas-drag", "canvas-drag-end"]) viewer.addHandler(type, event => { if (penDown && event.pointerType === "touch") event.preventDefaultAction = true; });
   viewer.addHandler("canvas-pinch", event => { if (penDown) event.preventDefaultPanAction = event.preventDefaultZoomAction = true; });
   function dropPress() {
