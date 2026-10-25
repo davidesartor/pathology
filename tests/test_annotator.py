@@ -291,6 +291,28 @@ def test_paint_and_erase_rois(annotator: Page, tiffs):
     assert len(areas()) == 1
 
 
+def test_erasing_inside_a_roi_keeps_its_outline(annotator: Page, tiffs):
+    """Erasing within a ROI cuts an exclusion zone and leaves the ROI's outline as it was; erasing within the zone again changes nothing."""
+    open_files(annotator, tiffs["ome_zlib"][0])
+    annotator.evaluate("viewer.viewport.zoomTo(viewer.viewport.imageToViewportZoom(0.25), viewer.viewport.imageToViewportCoordinates(3300, 2000), true)")
+    annotator.click("#draw-roi")
+    # a ROI tens of thousands of px across, so a mask px is many slide px
+    outline = annotator.evaluate("""() => {
+        const ring = Array.from({length: 360}, (_, i) => [Math.round(3300 + 30000 * Math.cos(i * Math.PI / 180)), Math.round(2000 + 30000 * Math.sin(i * Math.PI / 180))]);
+        changeDrawn(drawnLayer(), [ring]);
+        return ring;
+    }""")
+    for _ in range(5):
+        annotator.evaluate("applyStroke({points: [[3300, 2000]], radius: 40, erase: true})")
+    drawn = annotator.evaluate("drawnLayer().drawn")
+    assert len(drawn) == 2 and outline in drawn
+    hole = next(ring for ring in drawn if ring != outline)
+    assert annotator.evaluate("ringArea", hole) == pytest.approx(np.pi * 40 ** 2, rel=0.25)  # coarse: a mask px is some 15 slide px here
+    undos = len(annotator.evaluate("drawnLayer().history"))
+    annotator.evaluate("applyStroke({points: [[3290, 2000], [3310, 2000]], radius: 15, erase: true})")  # well within the zone
+    assert len(annotator.evaluate("drawnLayer().history")) == undos and annotator.evaluate("drawnLayer().drawn") == drawn
+
+
 def test_class_colour_width_and_merge(annotator: Page, tiffs, nuclei):
     """A class takes a new colour, width and fill; merged into another, its nuclei count there, and a rename covers both."""
     path, centres = nuclei
