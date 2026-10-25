@@ -210,7 +210,7 @@ def test_fingers_pan_while_measuring_and_only_the_pen_draws_once_used(app: Page,
 
 
 def test_pen_strokes_follow_the_pen_when_its_moves_arrive_cancelled(app: Page, tiffs, browser_name):
-    """iPadOS cancels the pencil's pointermoves along with its touches; a pen stroke still traces the path, not a line between its ends."""
+    """iPadOS cancels the pencil's pointermoves along with its touches, or drops them; a pen stroke still traces the path, not a line between its ends."""
     if browser_name != "chromium":
         return  # pen input is sent through the DevTools protocol
     open_files(app, tiffs["ome_zlib"][0])
@@ -230,8 +230,25 @@ def test_pen_strokes_follow_the_pen_when_its_moves_arrive_cancelled(app: Page, t
     for step in range(1, 21):
         pen("mouseMoved", 500, 300 + 10 * step)
     pen("mouseReleased", 500, 500)
-    area = app.evaluate("(typeof drawnLayer === 'function' ? drawnLayer().drawn : slide.areas.flatMap(area => area.rings)).map(ringArea).reduce((a, b) => a + b, 0)")
-    assert area == pytest.approx(400 * 20 + np.pi * 10 ** 2, rel=0.05)  # two sides of the square, not its diagonal
+    area = "(typeof drawnLayer === 'function' ? drawnLayer().drawn : slide.areas.flatMap(area => area.rings)).map(ringArea).reduce((a, b) => a + b, 0)"
+    stroke = 400 * 20 + np.pi * 10 ** 2  # two sides of the square, not its diagonal
+    assert app.evaluate(area) == pytest.approx(stroke, rel=0.05)
+
+    # nor when its pointermoves do not arrive at all: the moves come from its touches
+    pen("mousePressed", 600, 300)
+    app.evaluate("""() => {
+        const send = (type, x, y) => {
+            const touch = Object.defineProperty(new Touch({identifier: 9, target: viewer.canvas, clientX: x, clientY: y}), "touchType", {value: "stylus"});  // Chrome has no touchType
+            const touches = type === "touchend" ? [] : [touch];
+            viewer.canvas.dispatchEvent(new TouchEvent(type, {touches, changedTouches: [touch], cancelable: true, bubbles: true}));
+        };
+        send("touchstart", 600, 300);
+        for (let step = 1; step <= 20; step++) send("touchmove", 600 + 10 * step, 300);
+        for (let step = 1; step <= 20; step++) send("touchmove", 800, 300 + 10 * step);
+        send("touchend", 800, 500);
+    }""")
+    pen("mouseReleased", 800, 500)
+    assert app.evaluate(area) == pytest.approx(2 * stroke, rel=0.05)
 
 
 def test_microscope_field_sets_magnification(app: Page, tiffs):
