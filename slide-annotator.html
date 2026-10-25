@@ -2979,6 +2979,8 @@ for (const type of ["pointerup", "pointercancel"]) {
 // iPadOS takes a pencil's touches for Scribble, text selection or a double-tap zoom unless they are cancelled; OSD listens only to pointer events
 viewer.container.addEventListener("touchstart", event => { if ([...event.changedTouches].some(touch => touch.touchType === "stylus")) event.preventDefault(); }, {passive: false});
 viewer.container.addEventListener("touchmove", event => { if ([...event.touches].some(touch => touch.touchType === "stylus")) event.preventDefault(); }, {passive: false});
+// with its touches cancelled, the pencil's pointermoves arrive cancelled too, and OSD sends no drags for cancelled moves: only a stroke's ends would register
+viewer.innerTracker.preProcessEventHandler = info => { if (info.eventType === "pointermove" && info.pointerType === "pen") info.defaultPrevented = false; };
 for (const type of ["canvas-drag", "canvas-drag-end"]) viewer.addHandler(type, event => { if (penDown && event.pointerType === "touch") event.preventDefaultAction = true; });
 viewer.addHandler("canvas-pinch", event => { if (penDown) event.preventDefaultPanAction = event.preventDefaultZoomAction = true; });
 function dropPress() {
