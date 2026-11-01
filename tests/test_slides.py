@@ -44,13 +44,39 @@ def test_mrxs_associated_images_match_openslide(app: Page, mrxs):
     app.evaluate("document.querySelector('details:not([hidden]) .associated').closest('details').open = true")
     buttons = app.locator("details:not([hidden]) .associated button")
     assert buttons.all_inner_texts() == ["label", "macro", "thumbnail"] == sorted(reference.associated_images)
+    view = app.locator("#associated-view")
     for i, name in enumerate(["label", "macro", "thumbnail"]):
         buttons.nth(i).click()
-        view = app.locator("#associated-view")
-        wait_for(app, "document.querySelector('#associated-view img').naturalWidth > 0")
+        wait_for(app, "document.querySelector('#associated-view').open")
         assert view.locator("h2").inner_text() == name.capitalize()
-        assert app.evaluate("[...['naturalWidth', 'naturalHeight'].map(key => document.querySelector('#associated-view img')[key])]") == list(reference.associated_images[name].size)
-        view.locator("button").click()
+        assert read_canvas(app).shape[1::-1] == reference.associated_images[name].size
+        view.locator("button", has_text="Close").click()
+
+
+def read_canvas(page: Page) -> np.ndarray:
+    """RGBA of the associated image view's canvas."""
+    width, height, pixels = page.evaluate("""(() => { const canvas = document.querySelector('#associated-view canvas');
+        return [canvas.width, canvas.height, Array.from(canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data)]; })()""")
+    return np.array(pixels, np.uint8).reshape(height, width, 4)
+
+
+def test_associated_image_rotates_and_keeps_its_turn(app: Page, mrxs):
+    """Rotate turns the image a quarter turn clockwise each click, and reopening it keeps the turn."""
+    open_folder(app, mrxs["stitched"])
+    app.evaluate("document.querySelector('details:not([hidden]) .associated').closest('details').open = true")
+    label, view = app.locator("details:not([hidden]) .associated button").first, app.locator("#associated-view")
+    label.click()
+    wait_for(app, "document.querySelector('#associated-view').open")
+    upright = read_canvas(app)
+    rotate = view.locator("button", has_text="Rotate")
+    for turns in range(1, 5):
+        rotate.click()
+        np.testing.assert_array_equal(read_canvas(app), np.rot90(upright, -turns), err_msg=f"{turns} quarter turns")
+    rotate.click()
+    view.locator("button", has_text="Close").click()
+    label.click()
+    wait_for(app, "document.querySelector('#associated-view').open")
+    np.testing.assert_array_equal(read_canvas(app), np.rot90(upright, -1))
 
 
 def test_navigator_draws_the_slide(app: Page, tiffs):
