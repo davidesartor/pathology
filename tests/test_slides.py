@@ -53,6 +53,18 @@ def test_mrxs_associated_images_match_openslide(app: Page, mrxs):
         view.locator("button").click()
 
 
+def test_navigator_draws_the_slide(app: Page, tiffs):
+    """The navigator, hidden until a slide opens, draws it at its full size rather than OSD's 1 × 1 px fallback."""
+    open_files(app, tiffs["ome_zlib"][0])
+    wait_for(app, "viewer.navigator.world.getItemAt(0)?.getFullyLoaded()")
+    app.evaluate("new Promise(requestAnimationFrame)")
+    width, height, painted = app.evaluate("""(() => { const canvas = viewer.navigator.drawer.canvas;
+        const alpha = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data.filter((_, i) => i % 4 === 3);
+        return [canvas.width, canvas.height, alpha.filter(a => a > 0).length]; })()""")
+    assert (width, height) == tuple(app.evaluate("[viewer.navigator.container.clientWidth, viewer.navigator.container.clientHeight]"))
+    assert painted > width * height / 2
+
+
 def test_requests_stay_on_pinned_cdn(app: Page, server, tiffs, mrxs):
     """Slides never leave the device: after opening and browsing slides, every request went to this site or the pinned libraries."""
     requests = []

@@ -1219,6 +1219,7 @@ function listSlides() {
   $("detect").hidden = !slides.length || !$("model").options.length;
   $("no-slides").hidden = slides.length > 0;
   document.body.classList.toggle("empty", !slides.length);
+  viewer.navigator.updateSize();  // OSD sized it while hidden, at 1 × 1 px
 }
 listSlides();
 const setHash = (name, compareName) => { location.hash = encodeURIComponent([name, compareName].filter(Boolean).join("|")); };
