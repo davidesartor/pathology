@@ -6,7 +6,7 @@ import openslide
 import pytest
 from playwright.sync_api import Page
 
-from conftest import ROOT, PAGES, SIZE, TILE, open_files, open_folder, pointer_at, read_level, read_tile, set_view, settle
+from conftest import ROOT, PAGES, SIZE, TILE, open_files, open_folder, pointer_at, read_level, read_tile, set_view, settle, wait_for
 
 ALLOWED = re.compile(r"https://cdn\.jsdelivr\.net/npm/(openseadragon@5\.0\.1|geotiff@3\.0\.5|@cornerstonejs/codec-openjpeg@1\.3\.6|onnxruntime-web@1\.30\.0)/")
 
@@ -34,6 +34,23 @@ def test_mrxs_matches_openslide(app: Page, mrxs, name):
         want = want[..., :3] * want[..., 3:] // 255 + 255 - want[..., 3:]  # unscanned areas show the slide's white fill
         got = read_level(app, downsample)[:want.shape[0], :want.shape[1], :3]
         np.testing.assert_array_equal(got, want, err_msg=f"level {level}")
+
+
+def test_mrxs_associated_images_match_openslide(app: Page, mrxs):
+    """Slide info lists the label, macro and thumbnail images OpenSlide finds, each opening full size."""
+    folder = mrxs["stitched"]
+    reference = openslide.OpenSlide(folder.parent / f"{folder.name}.mrxs")
+    open_folder(app, folder)
+    app.evaluate("document.querySelector('details:not([hidden]) .associated').closest('details').open = true")
+    buttons = app.locator("details:not([hidden]) .associated button")
+    assert buttons.all_inner_texts() == ["label", "macro", "thumbnail"] == sorted(reference.associated_images)
+    for i, name in enumerate(["label", "macro", "thumbnail"]):
+        buttons.nth(i).click()
+        view = app.locator("#associated-view")
+        wait_for(app, "document.querySelector('#associated-view img').naturalWidth > 0")
+        assert view.locator("h2").inner_text() == name.capitalize()
+        assert app.evaluate("[...['naturalWidth', 'naturalHeight'].map(key => document.querySelector('#associated-view img')[key])]") == list(reference.associated_images[name].size)
+        view.locator("button").click()
 
 
 def test_requests_stay_on_pinned_cdn(app: Page, server, tiffs, mrxs):

@@ -151,6 +151,11 @@
   #metadata table { margin-top: 6px; border-spacing: 0; color: var(--fg); font-size: 12px; font-variant-numeric: tabular-nums; }
   #metadata td { padding: 1px 0; vertical-align: top; overflow-wrap: anywhere; }
   #metadata td:first-child { padding-right: 10px; color: var(--muted); white-space: nowrap; }
+  .associated { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 6px; margin-top: 8px; }
+  .associated button { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 4px; color: var(--muted); font-size: 11px; }
+  .associated img { max-width: 76px; max-height: 64px; }
+  .associated-view { max-width: min(92vw, 1000px); }
+  .associated-view img { display: block; max-width: 100%; max-height: 75vh; margin: 0 auto 14px; }
 
   /* popovers from the tools and microscope bars, placed beside their button */
   .pop { position: fixed; z-index: 6; width: 300px; max-width: calc(100% - 16px); max-height: calc(100% - 16px); overflow: auto; box-sizing: border-box; padding: 14px 16px; }
@@ -209,6 +214,11 @@
   <h2>Research use only</h2>
   <p>Not for diagnosis or clinical decisions. Provided as is, without warranty. <a href="https://github.com/davidesartor/pathology#disclaimer" target="_blank" rel="noopener">Details</a></p>
   <form method="dialog"><button autofocus>I understand</button></form>
+</dialog>
+<dialog class="disclaimer associated-view" id="associated-view">
+  <h2></h2>
+  <img alt="">
+  <form method="dialog"><button autofocus>Close</button></form>
 </dialog>
 <dialog class="disclaimer calibration" id="calibration">
   <h2>Calibrate screen</h2>
@@ -330,7 +340,7 @@
       </div>
       <p id="drop-hint" class="note">Slides, GeoJSON files and folders can also be dropped anywhere.</p>
     </div>
-    <details id="metadata" hidden><summary>Slide info</summary><table></table></details>
+    <details id="metadata" hidden><summary>Slide info</summary><table></table><div class="associated" id="associated"></div></details>
     <input id="slide-file" type="file" accept=".tif,.tiff,.btf,.tf8,.svs,.mrxs" multiple hidden>
     <input id="slide-folder" type="file" webkitdirectory hidden>
     <input id="files" type="file" accept=".geojson,.json" multiple hidden>
@@ -1562,10 +1572,12 @@ async function openMRXS(folder) {
   const hierRoot = 5 + general.SLIDE_ID.length, nonhierRoot = hierRoot + 4;
 
   // non-hierarchical records are numbered by name, then value, in Slidedat.ini order; their data page holds one (offset, size, file)
-  function nonhierRecord(name) {
+  function nonhierRecord(name, value = null) {
     for (let i = 0, record = 0; i < Number(hier.NONHIER_COUNT); record += Number(hier[`NONHIER_${i}_COUNT`]), i++)
       if (hier[`NONHIER_${i}_NAME`] === name) {
-        const page = int32(int32(int32(nonhierRoot) + 4 * record) + 4);
+        const j = value === null ? 0 : Array.from({length: Number(hier[`NONHIER_${i}_COUNT`])}, (_, j) => hier[`NONHIER_${i}_VAL_${j}`]).indexOf(value);
+        if (j < 0) return null;
+        const page = int32(int32(int32(nonhierRoot) + 4 * (record + j)) + 4);
         return file(datafile[`FILE_${int32(page + 24)}`]).slice(int32(page + 16), int32(page + 16) + int32(page + 20));
       }
     return null;
@@ -1737,7 +1749,11 @@ async function openMRXS(folder) {
     scanned: general.SLIDE_CREATIONDATETIME,
     original: general.SLIDE_NAME,
   });
-  return {width, height, mpp, metadata, inferenceMpp: mpp, image, drawRegion, background, source};
+  // the scanner's photos of the slide's label, the whole glass and a thumbnail, named as OpenSlide and QuPath list them
+  const associated = Object.entries({label: "ScanDataLayer_SlideBarcode", macro: "ScanDataLayer_SlideThumbnail", thumbnail: "ScanDataLayer_SlidePreview"})
+    .map(([name, value]) => { try { return [name, nonhierRecord("Scan data layer", value)]; } catch { return [name, null]; } })
+    .filter(([, blob]) => blob?.size > 0);
+  return {width, height, mpp, metadata, associated, inferenceMpp: mpp, image, drawRegion, background, source};
 }
 
 // slides are listed at once, and each is read when first shown
@@ -3839,6 +3855,18 @@ function renderInfo(scale) {
       const tr = document.createElement("tr");
       tr.append(...row.map(text => Object.assign(document.createElement("td"), {textContent: text})));
       return tr;
+    }));
+    slide.associatedUrls ??= (slide.associated ?? []).map(([name, blob]) => [name, URL.createObjectURL(blob)]);
+    $("associated").replaceChildren(...slide.associatedUrls.map(([name, url]) => {
+      const button = Object.assign(document.createElement("button"), {title: `show the ${name} image full size`});
+      button.append(Object.assign(document.createElement("img"), {src: url, alt: ""}), name);
+      button.addEventListener("click", () => {
+        const view = document.getElementById("associated-view");
+        view.querySelector("h2").textContent = name[0].toUpperCase() + name.slice(1);
+        view.querySelector("img").src = url;
+        view.showModal();
+      });
+      return button;
     }));
   }
   $("scale").hidden = !slide.mpp;

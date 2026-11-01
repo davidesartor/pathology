@@ -166,5 +166,6 @@ def mrxs(tmp_path_factory) -> dict[str, Path]:
     jitter = np.random.default_rng(0).integers(0, 3, (*grid, 2)) * 4  # multiples of 4, so every level's photos sit on whole px
     return {
         "grid": write_mrxs(root / "grid", "grid", photo, grid, 3, None, 0),
-        "stitched": write_mrxs(root / "stitched", "stitched", photo, grid, 3, np.stack([rows, cols], -1) + jitter, overlap, missing={8}),
+        "stitched": write_mrxs(root / "stitched", "stitched", photo, grid, 3, np.stack([rows, cols], -1) + jitter, overlap, missing={8},
+                               associated={"ScanDataLayer_SlideBarcode": pattern(60, 80, 2), "ScanDataLayer_SlideThumbnail": pattern(100, 300, 3), "ScanDataLayer_SlidePreview": pattern(40, 120, 4)}),
     }

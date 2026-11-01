@@ -1,4 +1,5 @@
 """Synthetic TIFF and MIRAX slides with known pixels, small enough to write per test session."""
+import io
 import struct
 from pathlib import Path
 
@@ -38,11 +39,12 @@ def write_tiff(path: Path, image: UInt8[np.ndarray, "H W 3"], levels: int, subif
 
 
 def write_mrxs(root: Path, name: str, photo: tuple[int, int], grid: tuple[int, int], levels: int, positions: np.ndarray | None,
-               overlap: int, missing: set[int] = frozenset(), seed: int = 1, gray: int | None = None) -> Path:
+               overlap: int, missing: set[int] = frozenset(), seed: int = 1, gray: int | None = None,
+               associated: dict[str, np.ndarray] | None = None) -> Path:
     """MIRAX slide: root/name.mrxs and root/name/{Slidedat.ini, Index.dat, Data0000.dat}, laid out as OpenSlide reads it.
 
     positions (Y X 2, level-0 px) go in a VIMSLIDE_POSITION_BUFFER; None leaves the nominal grid. Photos in `missing` are not scanned.
-    `gray` makes every photo that flat gray instead of the pattern.
+    `gray` makes every photo that flat gray instead of the pattern. `associated` (ScanDataLayer_* value -> image) are stored as JPEGs.
     """
     (photo_height, photo_width), (images_y, images_x) = photo, grid
     folder = root / name
@@ -88,6 +90,10 @@ def write_mrxs(root: Path, name: str, photo: tuple[int, int], grid: tuple[int, i
     if positions is not None:
         records = b"".join(struct.pack("<bii", 1, int(px), int(py)) for py, px in rearrange(positions, "y x c -> (y x) c"))
         nonhier.append(("VIMSLIDE_POSITION_BUFFER", "default", *store(records), 0))
+    for value, image in (associated or {}).items():
+        buffer = io.BytesIO()
+        Image.fromarray(image).save(buffer, "JPEG", quality=95)
+        nonhier.append(("Scan data layer", value, *store(buffer.getvalue()), 0))
     (folder / "Data0000.dat").write_bytes(bytes(data))
 
     # Index.dat: version, slide id, then pointers to the level and non-hierarchical record tables; each record is (0, page) and
@@ -108,16 +114,24 @@ def write_mrxs(root: Path, name: str, photo: tuple[int, int], grid: tuple[int, i
     struct.pack_into("<ii", index, 5 + len(slide_id), hier_table, nonhier_table)
     (folder / "Index.dat").write_bytes(bytes(index))
 
+    layers: dict[str, list[str]] = {}
+    for layer, value, *_ in nonhier:
+        layers.setdefault(layer, []).append(value)
     lines = ["[GENERAL]", f"SLIDE_ID = {slide_id}", f"IMAGENUMBER_X = {images_x}", f"IMAGENUMBER_Y = {images_y}", "CameraImageDivisionsPerSide = 1",
              "[HIERARCHICAL]", f"HIER_COUNT = 1", "HIER_0_NAME = Slide zoom level", f"HIER_0_COUNT = {levels}",
              *[f"HIER_0_VAL_{level} = ZoomLevel_{level}\nHIER_0_VAL_{level}_SECTION = LAYER_0_LEVEL_{level}_SECTION" for level in range(levels)],
-             f"NONHIER_COUNT = {len(nonhier)}",
-             *[f"NONHIER_{i}_NAME = {record}\nNONHIER_{i}_COUNT = 1\nNONHIER_{i}_VAL_0 = {value}" for i, (record, value, *_) in enumerate(nonhier)],
+             f"NONHIER_COUNT = {len(layers)}",
+             *[f"NONHIER_{i}_NAME = {layer}\nNONHIER_{i}_COUNT = {len(values)}\n" + "\n".join(f"NONHIER_{i}_VAL_{j} = {value}\nNONHIER_{i}_VAL_{j}_SECTION = NONHIER_{i}_VAL_{j}_SECTION" for j, value in enumerate(values))
+               for i, (layer, values) in enumerate(layers.items())],
              "INDEXFILE = Index.dat", "[DATAFILE]", "FILE_COUNT = 1", "FILE_0 = Data0000.dat"]
     for level in range(levels):
         lines += [f"[LAYER_0_LEVEL_{level}_SECTION]", f"OVERLAP_X = {overlap if level == 0 else 0}", f"OVERLAP_Y = {overlap if level == 0 else 0}",
                   f"MICROMETER_PER_PIXEL_X = {0.25 * 2 ** level}", f"MICROMETER_PER_PIXEL_Y = {0.25 * 2 ** level}",
                   "IMAGE_FILL_COLOR_BGR = 16777215", f"DIGITIZER_WIDTH = {photo_width}", f"DIGITIZER_HEIGHT = {photo_height}",
                   "IMAGE_FORMAT = PNG", f"IMAGE_CONCAT_FACTOR = {0 if level == 0 else 1}"]
+    image_type = {"ScanDataLayer_SlideBarcode": "BARCODE_IMAGE_TYPE", "ScanDataLayer_SlidePreview": "PREVIEW_IMAGE_TYPE", "ScanDataLayer_SlideThumbnail": "THUMBNAIL_IMAGE_TYPE"}
+    for i, values in enumerate(layers.values()):
+        for j, value in enumerate(values):
+            lines += [f"[NONHIER_{i}_VAL_{j}_SECTION]", *([f"{image_type[value]} = JPEG"] if value in image_type else [])]
     (folder / "Slidedat.ini").write_text("\r\n".join(lines) + "\r\n")
     return folder
