@@ -209,8 +209,8 @@ def test_fingers_pan_while_measuring_and_only_the_pen_draws_once_used(app: Page,
     assert app.evaluate(f"{switch}.checked")
 
 
-def test_pen_strokes_follow_the_pen_when_its_moves_arrive_cancelled(app: Page, tiffs, browser_name):
-    """iPadOS cancels the pencil's pointermoves along with its touches, or drops them; a pen stroke still traces the path, not a line between its ends."""
+def test_pen_strokes_follow_the_pen(app: Page, tiffs, browser_name):
+    """A pen stroke traces its path, not a line between its ends, also on iPad, where the pencil's moves come from its touches."""
     if browser_name != "chromium":
         return  # pen input is sent through the DevTools protocol
     open_files(app, tiffs["ome_zlib"][0])
@@ -218,7 +218,6 @@ def test_pen_strokes_follow_the_pen_when_its_moves_arrive_cancelled(app: Page, t
     app.click("#highlight, #draw-roi")
     app.click("#highlight-mode [data-value=paint], #roi-mode [data-value=paint]")
     app.evaluate("typeof changeBrush === 'function' ? changeBrush({size: 20}) : changeROIMode({brushSize: 20})")  # 10 slide px across a radius
-    app.evaluate("window.addEventListener('pointermove', event => { if (event.pointerType === 'pen') event.preventDefault(); }, true)")
     cdp = app.context.new_cdp_session(app)
 
     def pen(kind, x, y):
@@ -234,7 +233,7 @@ def test_pen_strokes_follow_the_pen_when_its_moves_arrive_cancelled(app: Page, t
     stroke = 400 * 20 + np.pi * 10 ** 2  # two sides of the square, not its diagonal
     assert app.evaluate(area) == pytest.approx(stroke, rel=0.05)
 
-    # nor when its pointermoves do not arrive at all: the moves come from its touches
+    # on iPad its pointermoves arrive cancelled or not at all, and the moves come from its touches
     pen("mousePressed", 600, 300)
     app.evaluate("""() => {
         const send = (type, x, y) => {
