@@ -3,7 +3,7 @@ on: [push, pull_request]
 
 jobs:
   pages:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # ubuntu-latest (26.04) gets a WebKit build that resamples turned captures differently from its screen
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
