@@ -12,6 +12,11 @@ def screen(page: Page, x: float, y: float) -> tuple[float, float]:
     return tuple(page.evaluate("([x, y]) => { const point = viewer.viewport.imageToViewerElementCoordinates(new OpenSeadragon.Point(x, y)), rect = viewer.container.getBoundingClientRect(); return [rect.left + point.x, rect.top + point.y]; }", [x, y]))
 
 
+def near(got: list[list[float]], expected: list[tuple[float, float]], tolerance: float = 4) -> bool:
+    """The same points in order, each within a screen px at 0.25 screen px per slide px: WebKit can place a click a px off."""
+    return len(got) == len(expected) and all(abs(gx - ex) <= tolerance and abs(gy - ey) <= tolerance for (gx, gy), (ex, ey) in zip(got, expected))
+
+
 def dot_counts(page: Page) -> dict[str, int]:
     """The Dots layer's classes that have dots, by their counts in the layers."""
     names = page.evaluate("dotClasses(layers.find(layer => layer.dotTool)).map(cls => cls.name)")
@@ -43,7 +48,7 @@ def test_dots_are_placed_changed_and_undone(annotator: Page, tiffs):
     annotator.click("#dots-undo")
     assert dot_counts(annotator) == {"Tumor": 3, "Lymphocyte": 4}
     tumor = annotator.evaluate("layers.find(layer => layer.dotTool).classes.get('Tumor').centres")
-    assert sorted(zip(tumor[::2], tumor[1::2])) == [(2000, 2000), (2400, 2000), (2800, 2000)]
+    assert near(sorted(zip(tumor[::2], tumor[1::2])), [(2000, 2000), (2400, 2000), (2800, 2000)])
 
     annotator.fill("#dot-class-name", "Mitosis")
     annotator.press("#dot-class-name", "Enter")
@@ -90,10 +95,9 @@ def test_dots_save_as_points_and_load_back(annotator: Page, tiffs, tmp_path):
     path = tmp_path / download.value.suggested_filename
     download.value.save_as(path)
     saved = json.loads(path.read_text())
-    assert [(f["properties"]["classification"]["name"], f["geometry"]) for f in saved["features"]] == [
-        ("Tumor", {"type": "MultiPoint", "coordinates": [[2000, 2000], [2400, 2000]]}),
-        ("Lymphocyte", {"type": "MultiPoint", "coordinates": [[2400, 2400]]}),
-    ]
+    assert [(f["properties"]["classification"]["name"], f["geometry"]["type"]) for f in saved["features"]] == [("Tumor", "MultiPoint"), ("Lymphocyte", "MultiPoint")]
+    assert near(saved["features"][0]["geometry"]["coordinates"], [(2000, 2000), (2400, 2000)])
+    assert near(saved["features"][1]["geometry"]["coordinates"], [(2400, 2400)])
     assert "(not saved)" not in annotator.locator("#layers h4").inner_text()
 
     # on a fresh page the file is the slide's dots again, and placing more goes on with it
