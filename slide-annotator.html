@@ -125,6 +125,9 @@
   .choices { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin: 4px 0; }
   .choices button { display: flex; align-items: center; gap: 6px; text-align: left; overflow: hidden; }
   .choices kbd { color: var(--faint); font: inherit; }
+  #dot-classes span:nth-child(3) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #new-dot-class { display: flex; gap: 4px; margin: 6px 0; }
+  #new-dot-class input { flex: 1; min-width: 0; min-height: 30px; padding: 4px 8px; background: var(--raised); border: 1px solid var(--line); border-radius: 7px; }
   .stats { white-space: pre-line; font-variant-numeric: tabular-nums; }
   .per-roi { margin-top: 6px; overflow-x: auto; }
   .per-roi table { width: 100%; border-spacing: 0; font-size: 12px; font-variant-numeric: tabular-nums; color: var(--muted); }
@@ -244,6 +247,7 @@
   <div id="tools" class="hud box" role="toolbar" aria-label="tools" hidden>
     <button id="pan" class="active" title="move around: drag to pan, scroll or pinch to zoom"><svg class="ico" viewBox="0 0 20 20"><path d="M10 2v16M2 10h16M10 2 7.6 4.4M10 2l2.4 2.4M10 18l-2.4-2.4M10 18l2.4-2.4M2 10l2.4-2.4M2 10l2.4 2.4M18 10l-2.4-2.4M18 10l-2.4 2.4"/></svg>Pan</button>
     <button id="draw-roi" title="draw regions on this slide"><svg class="ico" viewBox="0 0 20 20"><path d="M4 6.5 9.5 3l6.5 3 1 7-6 4-7-3z"/><circle cx="4" cy="6.5" r="1.3" fill="currentColor"/><circle cx="16" cy="6" r="1.3" fill="currentColor"/></svg>ROI</button>
+    <button id="dots" title="click to place dots of a class, which are counted like nuclei, inside the ROIs shown"><svg class="ico" viewBox="0 0 20 20"><circle cx="5.5" cy="6" r="2.2" fill="currentColor"/><circle cx="14" cy="5" r="2.2"/><circle cx="9.5" cy="12" r="2.2" fill="currentColor"/><circle cx="15.5" cy="15" r="2.2"/><circle cx="4.5" cy="16" r="2.2"/></svg>Dots</button>
     <button id="measure" title="draw straight lines labelled with their length; captures show them"><svg class="ico" viewBox="0 0 20 20"><path d="M3 14 14 3l3 3L6 17z"/><path d="M6.5 10.5 8 12M9 8l1.5 1.5M11.5 5.5 13 7"/></svg>Measure</button>
     <button id="capture" title="frame part of the slide and save it as an image, turned and mirrored as on screen, with the layers shown"><svg class="ico" viewBox="0 0 20 20"><path d="M3 7V3h4M13 3h4v4M17 13v4h-4M7 17H3v-4"/><circle cx="10" cy="10" r="2.6"/></svg>Capture</button>
     <div class="sep"></div>
@@ -284,6 +288,13 @@
         <p class="note" id="outline-help">Click to place corners, or hold and drag to trace. Close with Enter, a double-click or a click on the first corner. A shape drawn inside another is an exclusion zone. Backspace undoes, Esc cancels. Two fingers pan, pinch zooms.</p>
         <p class="note" id="paint-help">Drag to paint; a stroke joins the ROIs it touches, and a gap left inside one is an exclusion zone. Zoom in for finer edges. Backspace undoes, Esc stops. Two fingers pan, pinch zooms.</p>
         <div class="buttons"><button id="roi-undo" title="undo the last change; Backspace also does">Undo</button></div>
+      </div>
+      <div id="dots-help" hidden>
+        <h3>Dots</h3>
+        <div class="choices" id="dot-classes"></div>
+        <div id="new-dot-class"><input type="text" id="dot-class-name" placeholder="new class" aria-label="new class" spellcheck="false"><button id="add-dot-class" title="add a class to place dots of">Add</button></div>
+        <p class="note">Click to place a dot of the chosen class; click a dot to give it that class, or to remove it if it has it already. Keys 1–9 choose the class. Drag to pan. Backspace undoes, Esc stops. The counts are in the layers, inside the ROIs shown.</p>
+        <div class="buttons"><button id="dots-undo" title="undo the last change; Backspace also does">Undo</button></div>
       </div>
       <div id="measure-help" hidden>
         <h3>Measure</h3>
@@ -1248,8 +1259,8 @@ function renderTabs() {
 function closeSlide(entry) {
   const entryLayers = layersBySlide[entry.name] ?? [];
   const busy = entryLayers.some(layer => layer.running || layer.queued);
-  const unsaved = entryLayers.some(layer => (layer.drawn?.length || layer.featureParts?.length) && !layer.saved || layer.labels?.size && !layer.labelsSaved);
-  if ((busy || unsaved) && !confirm(`Close ${entry.name}? ${busy ? "Its nucleus detection stops and" : "Its"} unsaved ROIs and nuclei are discarded.`)) return;
+  const unsaved = entryLayers.some(unsavedLayer);
+  if ((busy || unsaved) && !confirm(`Close ${entry.name}? ${busy ? "Its nucleus detection stops and" : "Its"} unsaved ROIs, nuclei and dots are discarded.`)) return;
   for (const layer of [...entryLayers]) removeLayer(layer);
   delete layersBySlide[entry.name];
   const index = slides.indexOf(entry);
@@ -1867,6 +1878,8 @@ function toRGB(color) {
   return DEFAULT_COLOR;
 }
 
+const unsavedLayer = layer => (layer.drawn?.length || layer.featureParts?.length || layer.dotTool) && !layer.saved || layer.labels?.size && !layer.labelsSaved;
+
 function newLayer(name, target = layers, forSlide = slide) {
   const layer = {name, classes: new Map(), files: new Set(), slide: forSlide};
   target.push(layer);
@@ -1917,12 +1930,14 @@ function clearNuclei(cls) {
 }
 
 // polygons grouped by classification, as one Path2D per class (and per grid cell for nuclei) in slide px; a class renamed
-// or merged takes the features still arriving under its old names. `width` is its outline's width in screen px
-function layerClass(layer, name, color, detection) {
+// or merged takes the features still arriving under its old names. `width` is its outline's width in screen px.
+// Dots, placed by hand or loaded as points, count as nuclei do; they are kept as centres only, and `width` sets their size
+function layerClass(layer, name, color, detection, dots = false) {
   name = layer.renamed?.get(name) ?? name;
   if (!layer.classes.has(name)) layer.classes.set(name, {
-    name, color, detection, width: detection ? 1.5 : 3, aliases: new Set([name]), count: 0, visible: true, paths: new Map(), circles: new Map(),
-    overview: detection ? newOverview(layer.slide, color) : null,
+    name, color, detection, dots, width: dots ? 2 : detection ? 1.5 : 3, aliases: new Set([name]), count: 0, visible: true, paths: new Map(), circles: new Map(),
+    overview: detection && !dots ? newOverview(layer.slide, color) : null,
+    ...dots && {centres: []},
   });
   return layer.classes.get(name);
 }
@@ -1963,7 +1978,7 @@ function mergeClass(target, source) {
   if (source.rings) target.rings = (target.rings ?? []).concat(source.rings);
   if (source.centres) target.centres = (target.centres ?? []).concat(source.centres);
   target.nuclei ??= source.nuclei;
-  if (target.overview) {
+  if (target.overview && source.overview) {
     target.overview.context.drawImage(source.overview.canvas, 0, 0);
     setClassColor(target, target.color);
   }
@@ -1973,7 +1988,7 @@ function mergeClass(target, source) {
 // a class renamed, or merged into the class of the layer that already has the name
 function renameClass(layer, cls, name) {
   const target = layer.classes.get(name);
-  if (name && name !== cls.name && !(target && (target.halo || target.detection !== cls.detection))) {
+  if (name && name !== cls.name && !(target && (target.halo || target.detection !== cls.detection || target.dots !== cls.dots))) {
     layer.renamed ??= new Map();
     for (const alias of cls.aliases) layer.renamed.set(alias, name);
     const entries = [...layer.classes].filter(([, other]) => !(target && other === cls)).map(([key, other]) => other === cls ? [name, cls] : [key, other]);
@@ -2026,9 +2041,16 @@ function addMember(cls, key, ring, i) {
 function addFeatures(layer, features) {
   const start = layer.nuclei?.x.length ?? 0;
   for (const {geometry, properties} of features) {
-    if (!geometry || !["Polygon", "MultiPolygon"].includes(geometry.type)) continue;
     const classification = properties?.classification ?? {};
     const color = toRGB(classification.color ?? classification.colorRGB ?? properties?.color);
+    if (["Point", "MultiPoint"].includes(geometry?.type)) {  // e.g. saved dots, or QuPath's points
+      const cls = layerClass(layer, classification.name ?? "unclassified", color, true, true);
+      if (!cls.dots) continue;  // named as nuclei already in the layer
+      for (const [x, y] of geometry.type === "Point" ? [geometry.coordinates] : geometry.coordinates) cls.centres.push(x, y);
+      cls.count = cls.centres.length / 2;
+      continue;
+    }
+    if (!geometry || !["Polygon", "MultiPolygon"].includes(geometry.type)) continue;
     const cls = layerClass(layer, classification.name ?? "unclassified", color, properties?.objectType === "detection");
     cls.count++;
     const polygons = geometry.type === "Polygon" ? [geometry.coordinates] : geometry.coordinates;
@@ -2200,6 +2222,8 @@ async function addLayer(name, files) {
       }
     }
     $("loading").hidden = true;
+    const classes = [...layer.classes.values()];
+    if (classes.length && classes.every(cls => cls.dots) && !target.some(other => other.dotTool)) Object.assign(layer, {dotTool: true, saved: true});
   } catch (error) {
     target.splice(target.indexOf(layer), 1);
     $("loading").textContent = `could not load ${name}: ${error.message}`;
@@ -2475,9 +2499,11 @@ function renderLayers() {
     heading.innerHTML = `<span></span><button title="save these nuclei as a GeoJSON file (QuPath detections)">⤓</button><button title="remove layer">×</button>`;
     const [title, saveButton, removeButton] = heading.children;
     title.textContent = heading.title = layer.watched ? `${layer.name} (${layer.files.size} files, live)` : layer.running ? `${layer.name} (running)` : layer.queued ? `${layer.name} (queued)`
-      : (layer.drawn || layer.featureParts) && !layer.saved ? `${layer.name} (not saved)` : layer.name;
-    saveButton.hidden = !layer.featureParts || layer.queued;
+      : (layer.drawn || layer.featureParts || layer.dotTool) && !layer.saved ? `${layer.name} (not saved)` : layer.name;
+    saveButton.hidden = !(layer.featureParts || layer.dotTool) || layer.queued;
+    if (layer.dotTool) saveButton.title = "save these dots as a GeoJSON file (QuPath point annotations)";
     saveButton.addEventListener("click", async () => {
+      if (layer.dotTool) return saveDots(layer);
       const parts = layer.featureParts.flatMap((part, i) => i ? [",", part] : [part]);
       const blob = new Blob(['{"type": "FeatureCollection", "features": [', ...parts, "]}"], {type: "application/geo+json"});
       if (await saveFile(blob, layer.fileName) && !layer.running) layer.saved = true;
@@ -2487,6 +2513,7 @@ function renderLayers() {
       if (layer.running && !confirm("Stop detecting nuclei and discard them?")) return;
       if (!layer.running && !layer.queued && layer.featureParts && !layer.saved && !confirm("Discard these nuclei? They are not saved.")) return;
       if (layer.drawn && !layer.saved && !confirm("Discard the ROIs drawn on this slide? They are not saved.")) return;
+      if (layer.dotTool && !layer.saved && !confirm("Discard the dots placed on this slide? They are not saved.")) return;
       if (layer.labels?.size && !layer.labelsSaved && !confirm("Discard the nuclei labelled in this layer? They are not saved.")) return;
       removeLayer(layer); renderLayers(); draw(); });
     $("layers").append(heading);
@@ -2522,6 +2549,7 @@ function renderLayers() {
     if (byRegion.length > 1 && counts.size) $("layers").append(regionTable(byRegion));
   }
   $("drop-hint").hidden = layers.length > 0;
+  if (dotting) renderDotClasses();
   $("save-roi").disabled = !layers.some(layer => layer.drawn?.length);
 }
 
@@ -2529,20 +2557,23 @@ function renderLayers() {
 function classEditor(layer, cls, swatch) {
   const editor = document.createElement("div");
   editor.className = "class-edit";
-  editor.innerHTML = `<label>colour <input type="color"></label><label title="the outlines' width on screen">width <input type="range" min="0.5" max="6" step="0.5"><span class="count"></span></label>`;
+  editor.innerHTML = cls.dots ? `<label>colour <input type="color"></label><label title="the dots' size on screen">size <input type="range" min="0.5" max="6" step="0.5"><span class="count"></span></label>`
+    : `<label>colour <input type="color"></label><label title="the outlines' width on screen">width <input type="range" min="0.5" max="6" step="0.5"><span class="count"></span></label>`;
   const [color, width] = editor.querySelectorAll("input"), widthValue = editor.querySelector(".count");
   color.value = toHex(cls.color);
   color.addEventListener("input", () => { setClassColor(cls, fromHex(color.value)); swatch.style.background = color.value; draw(); });
   color.addEventListener("change", renderLayers);
-  const showWidth = () => { width.value = cls.width; widthValue.textContent = `${cls.width} px`; };
+  const showWidth = () => { width.value = cls.width; widthValue.textContent = cls.dots ? `${2 * dotRadius(cls)} px` : `${cls.width} px`; };
   width.addEventListener("input", () => { cls.width = Number(width.value); showWidth(); draw(); });
   showWidth();
   if (cls.halo) return editor;
-  editor.insertAdjacentHTML("beforeend", `<label title="shade the inside, as well as the outline">fill <input type="range" min="0" max="0.8" step="0.1"><span class="count"></span></label>`);
-  const [fill, fillValue] = editor.lastChild.querySelectorAll("input, .count");
-  const showFill = () => { fill.value = cls.fill ?? 0; fillValue.textContent = `${Math.round(100 * fill.value)}%`; };
-  fill.addEventListener("input", () => { cls.fill = Number(fill.value); showFill(); draw(); });
-  showFill();
+  if (!cls.dots) {
+    editor.insertAdjacentHTML("beforeend", `<label title="shade the inside, as well as the outline">fill <input type="range" min="0" max="0.8" step="0.1"><span class="count"></span></label>`);
+    const [fill, fillValue] = editor.lastChild.querySelectorAll("input, .count");
+    const showFill = () => { fill.value = cls.fill ?? 0; fillValue.textContent = `${Math.round(100 * fill.value)}%`; };
+    fill.addEventListener("input", () => { cls.fill = Number(fill.value); showFill(); draw(); });
+    showFill();
+  }
   if (layer.drawn) return editor;
 
   const name = Object.assign(document.createElement("input"), {type: "text", value: cls.name, spellcheck: false, title: "rename the class; the name of another class merges the two"});
@@ -2551,7 +2582,7 @@ function classEditor(layer, cls, swatch) {
     if (event.key === "Escape") name.value = cls.name;
     if (event.key === "Enter" || event.key === "Escape") name.blur();
   });
-  const others = [...layer.classes.values()].filter(other => other !== cls && !other.halo && other.detection === cls.detection);
+  const others = [...layer.classes.values()].filter(other => other !== cls && !other.halo && other.detection === cls.detection && other.dots === cls.dots);
   const merge = document.createElement("select");
   merge.title = "join this class's nuclei to another class, which keeps its name and colour";
   merge.append(new Option("Merge into…", ""), ...others.map(other => new Option(other.name, other.name)));
@@ -2969,16 +3000,19 @@ window.addEventListener("keydown", event => { if (event.key === "Escape") closeP
 // one tool at a time on the main pane: drawing ROIs, measuring or capturing
 let measuring = false;
 let capturing = false;
+let dotting = false;
 function setTool(tool) {
   if (drawing && tool !== "roi" && draft.length) finishDraft();
   stroke = null;
-  [drawing, measuring, capturing] = ["roi", "measure", "capture"].map(name => name === tool);
+  [drawing, measuring, capturing, dotting] = ["roi", "measure", "capture", "dots"].map(name => name === tool);
   measureStart = null;
   toolGestures();
-  viewer.canvas.style.cursor = drawing || measuring ? "crosshair" : "";
-  for (const [id, on] of [["pan", !tool], ["draw-roi", drawing], ["measure", measuring], ["capture", capturing]]) $(id).classList.toggle("active", on);
+  viewer.canvas.style.cursor = drawing || measuring || dotting ? "crosshair" : "";
+  for (const [id, on] of [["pan", !tool], ["draw-roi", drawing], ["measure", measuring], ["capture", capturing], ["dots", dotting]]) $(id).classList.toggle("active", on);
   $("toolopts").hidden = !tool;
   $("draw-help").hidden = !drawing;
+  $("dots-help").hidden = !dotting;
+  if (dotting) renderDotClasses();
   $("measure-help").hidden = !measuring;
   $("fingers-draw-row").hidden = !(drawing || measuring) || !navigator.maxTouchPoints;
   $("capture-settings").hidden = !capturing;
@@ -2995,9 +3029,12 @@ function setTool(tool) {
 $("pan").addEventListener("click", () => setTool(null));
 function toolGestures() {
   const on = drawing || measuring;
-  for (const settings of [viewer.gestureSettingsMouse, viewer.gestureSettingsTouch, viewer.gestureSettingsPen]) settings.dragToPan = settings.clickToZoom = !on;
-  // a double tap would zoom as it closes an outline, and a tap then a drag would zoom instead of tracing
-  viewer.gestureSettingsTouch.dblClickToZoom = viewer.gestureSettingsTouch.dblClickDragToZoom = !on;
+  for (const settings of [viewer.gestureSettingsMouse, viewer.gestureSettingsTouch, viewer.gestureSettingsPen]) {
+    settings.dragToPan = !on;
+    settings.clickToZoom = !on && !dotting;  // with dots, a drag still pans but a click places a dot
+  }
+  // a double tap would zoom as it closes an outline or places a second dot, and a tap then a drag would zoom instead of tracing
+  viewer.gestureSettingsTouch.dblClickToZoom = viewer.gestureSettingsTouch.dblClickDragToZoom = !on && !dotting;
   if (!fingersDraw) viewer.gestureSettingsTouch.dragToPan = true;
 }
 
@@ -3071,6 +3108,7 @@ function dropPress() {
 }
 $("draw-roi").addEventListener("click", () => setTool(drawing ? null : "roi"));
 $("measure").addEventListener("click", () => setTool(measuring ? null : "measure"));
+$("dots").addEventListener("click", () => setTool(dotting ? null : "dots"));
 $("capture").addEventListener("click", () => setTool(capturing ? null : "capture"));
 
 // with the brush, a press starts a stroke, laid on the ROIs when released
@@ -3120,16 +3158,23 @@ viewer.addHandler("canvas-release", event => {
 });
 viewer.addHandler("canvas-double-click", () => { if (drawing && !painting()) finishDraft(); });
 
-// a click on a nucleus selects it for labelling, instead of zooming (OSD has already undone the mirroring of a click)
+// with the Dots tool, a click places a dot or changes the one under it (OSD has already undone the mirroring of a click)
 viewer.addHandler("canvas-click", event => {
-  if (drawing || measuring || capturing || !event.quick || !MANUAL_REVIEW) return;
+  if (!dotting || !event.quick) return;
+  event.preventDefaultAction = true;
+  const point = viewer.viewport.viewerElementToImageCoordinates(event.position);
+  clickDot(point.x, point.y);
+});
+// a click on a nucleus selects it for labelling, instead of zooming
+viewer.addHandler("canvas-click", event => {
+  if (drawing || measuring || capturing || dotting || !event.quick || !MANUAL_REVIEW) return;
   const point = viewer.viewport.viewerElementToImageCoordinates(event.position), hit = nucleusAt(point.x, point.y);
   if (!hit && !selected) return;
   event.preventDefaultAction = true;
   hit ? select(hit.layer, hit.i) : select(null);
 });
 window.addEventListener("keydown", event => {
-  if (drawing || measuring || capturing || !selected || event.metaKey || event.ctrlKey || event.altKey || ["INPUT", "SELECT", "TEXTAREA"].includes(event.target.tagName)) return;
+  if (drawing || measuring || capturing || dotting || !selected || event.metaKey || event.ctrlKey || event.altKey || ["INPUT", "SELECT", "TEXTAREA"].includes(event.target.tagName)) return;
   const names = selected.layer.nuclei.names, digit = Number(event.key);
   if (event.key === "0") labelNucleus(NOT_NUCLEUS);
   else if (Number.isInteger(digit) && digit >= 1 && digit <= names.length) labelNucleus(names[digit - 1]);
@@ -3148,6 +3193,9 @@ window.addEventListener("keydown", event => {
   else if (capturing && event.key === "Enter") saveFrame();
   else if (measuring && event.key === "Escape") measureStart ? (measureStart = null, draw()) : setTool(null);
   else if (measuring && isUndo(event)) measureStart ? (measureStart = null, draw()) : undoLine();
+  else if (dotting && event.key === "Escape") setTool(null);
+  else if (dotting && isUndo(event)) undoDot();
+  else if (dotting && /^[1-9]$/.test(event.key) && !event.metaKey && !event.ctrlKey && !event.altKey) chooseDotClass(Number(event.key) - 1);
   else if (!drawing) return;
   else if (event.key === "Enter") finishDraft();
   else if (event.key === "Escape") draft.length ? ([draft, draftStrokes] = [[], []], draw()) : setTool(null);
@@ -3203,6 +3251,126 @@ function finishLine(end) {
   }
   draw();
 }
+// dots: counting by hand. Each slide has one layer of them, made with its first dot; its classes count as nuclei do, in the
+// layers and inside the ROIs shown. Each change is kept as the dot it removed and the dot it added, for undo
+const DOT_CLASSES = [["Tumor", [230, 50, 50]], ["Lymphocyte", [50, 120, 255]], ["Stroma", [60, 190, 90]], ["Other", [255, 200, 0]]];
+const DOT_REACH = 10;  // screen px from a dot's centre within which a click hits it
+const dotRadius = cls => 2 * cls.width + 1;  // screen px
+let dotIndex = 0;  // the chosen class, by its place in the list, which keys 1-9 pick
+const dotClasses = layer => [...layer.classes.values()].filter(cls => cls.dots);
+function dotsLayer() {
+  let layer = layers.find(layer => layer.dotTool);
+  if (layer) return layer;
+  layer = Object.assign(newLayer("Dots"), {dotTool: true, saved: true});
+  for (const [name, color] of DOT_CLASSES) layerClass(layer, name, color, true, true);
+  return layer;
+}
+// a class merged into another since a change was made: its dots are in that one now
+const liveClass = (layer, cls) => layer.classes.get(cls.name) === cls ? cls : dotClasses(layer).find(other => other.aliases.has(cls.name)) ?? cls;
+
+function dotAt(layer, x, y) {
+  const reach = DOT_REACH / screenScale();
+  let best = null;
+  for (const cls of dotClasses(layer)) if (cls.visible) {
+    const {centres} = cls;
+    for (let i = 0; i < centres.length; i += 2) {
+      const distance = Math.hypot(centres[i] - x, centres[i + 1] - y);
+      if (distance < reach && !(best?.distance < distance)) best = {cls, x: centres[i], y: centres[i + 1], distance};
+    }
+  }
+  return best;
+}
+
+// removed and added are [class, x, y], or null
+function changeDots(layer, removed, added) {
+  if (removed) {
+    const cls = liveClass(layer, removed[0]), {centres} = cls;
+    for (let i = centres.length - 2; i >= 0; i -= 2) if (centres[i] === removed[1] && centres[i + 1] === removed[2]) { centres.splice(i, 2); cls.count--; break; }
+  }
+  if (added) {
+    const cls = liveClass(layer, added[0]);
+    cls.centres.push(added[1], added[2]);
+    cls.count++;
+  }
+  layer.saved = false;
+  delete layer.inside;
+  renderLayers();
+  draw();
+}
+
+// on tissue a click places a dot of the chosen class; on a dot of another class it takes the chosen one; on one of the chosen class it goes
+function clickDot(x, y) {
+  const layer = dotsLayer(), classes = dotClasses(layer), cls = classes[Math.min(dotIndex, classes.length - 1)];
+  if (!cls) return;
+  const hit = dotAt(layer, x, y), at = hit && [hit.cls, hit.x, hit.y];
+  const change = !hit ? [null, [cls, Math.round(x), Math.round(y)]] : [at, hit.cls === cls ? null : [cls, hit.x, hit.y]];
+  (layer.dotHistory ??= []).push(change);
+  changeDots(layer, ...change);
+}
+function undoDot() {
+  const layer = layers.find(layer => layer.dotTool), change = layer?.dotHistory?.pop();
+  if (change) changeDots(layer, change[1], change[0]);
+}
+
+function chooseDotClass(index) {
+  const count = layers.find(layer => layer.dotTool) ? dotClasses(dotsLayer()).length : DOT_CLASSES.length;
+  if (index >= count) return;
+  dotIndex = index;
+  renderDotClasses();
+}
+function addDotClass() {
+  const name = $("dot-class-name").value.trim(), layer = dotsLayer();
+  $("dot-class-name").value = "";
+  if (!name) return renderLayers();
+  const existing = dotClasses(layer).findIndex(cls => cls.name === name);
+  if (existing >= 0) dotIndex = existing;
+  else if (layer.classes.has(name)) return renderLayers();  // the name of another kind of class in the layer
+  else {
+    const palette = DOT_CLASSES.map(([, color]) => color), used = new Set(dotClasses(layer).map(cls => toHex(cls.color)));
+    const color = palette.find(color => !used.has(toHex(color))) ?? [Math.random() * 255, Math.random() * 255, Math.random() * 255].map(Math.round);
+    layerClass(layer, name, color, true, true);
+    dotIndex = dotClasses(layer).length - 1;
+  }
+  renderLayers();
+}
+
+// the classes to place dots of; before the first dot, the ones its layer will start with
+function renderDotClasses() {
+  const layer = layers.find(layer => layer.dotTool);
+  const classes = layer ? dotClasses(layer) : DOT_CLASSES.map(([name, color]) => ({name, color}));
+  dotIndex = Math.max(0, Math.min(dotIndex, classes.length - 1));
+  $("dot-classes").replaceChildren(...classes.map((cls, i) => {
+    const button = document.createElement("button");
+    button.innerHTML = `<kbd></kbd><span class="swatch"></span><span></span>`;
+    const [key, swatch, name] = button.children;
+    key.textContent = i < 9 ? i + 1 : "";
+    swatch.style.background = toHex(cls.color);
+    name.textContent = button.title = cls.name;
+    button.classList.toggle("active", i === dotIndex);
+    button.addEventListener("click", () => { dotIndex = i; renderDotClasses(); });
+    return button;
+  }));
+  $("dots-undo").disabled = !layer?.dotHistory?.length;
+}
+$("dots-undo").addEventListener("click", undoDot);
+$("add-dot-class").addEventListener("click", addDotClass);
+$("dot-class-name").addEventListener("keydown", event => {
+  if (event.key === "Enter") addDotClass();
+  if (event.key === "Escape") { $("dot-class-name").value = ""; $("dot-class-name").blur(); }
+});
+
+// one MultiPoint per class, as QuPath saves its points
+async function saveDots(layer) {
+  const features = dotClasses(layer).filter(cls => cls.count).map(cls => ({
+    type: "Feature",
+    geometry: {type: "MultiPoint", coordinates: Array.from({length: cls.count}, (_, i) => [cls.centres[2 * i], cls.centres[2 * i + 1]])},
+    properties: {objectType: "annotation", classification: {name: cls.name, color: cls.color}},
+  }));
+  const blob = new Blob([JSON.stringify({type: "FeatureCollection", features})], {type: "application/geo+json"});
+  if (await saveFile(blob, `${layer.slide.name}_dots.geojson`)) layer.saved = true;
+  renderLayers();
+}
+
 function undoLine() {
   if (!slide?.areas.length) return;
   slide.areas.pop();
@@ -3482,8 +3650,7 @@ $("roi-file").addEventListener("change", async () => {
   addROIs(rings);
 });
 window.addEventListener("beforeunload", event => {
-  const unsaved = layer => (layer.drawn?.length || layer.featureParts?.length) && !layer.saved || layer.labels?.size && !layer.labelsSaved;
-  if (detection || queue.length || Object.values(layersBySlide).flat().some(unsaved)) event.preventDefault();
+  if (detection || queue.length || Object.values(layersBySlide).flat().some(unsavedLayer)) event.preventDefault();
 });
 
 function* visibleCells(topLeft, bottomRight) {
@@ -3946,7 +4113,7 @@ function drawLayers(target, layerList, scale, topLeft, bottomRight) {
   const {rings, depths} = shownRegions(layerList);
   const nucleiCtx = rings.length ? paneScratch(target, "nucleiCtx") : ctx;
   const sorted = visibleClasses.sort((a, b) => order(a) - order(b));
-  for (const cls of sorted.filter(cls => cls.detection)) {
+  for (const cls of sorted.filter(cls => cls.detection && !cls.dots)) {
     if (dotMap) {
       const {canvas} = cls.overview;
       nucleiCtx.drawImage(canvas, 0, 0, canvas.width * OVERVIEW, canvas.height * OVERVIEW);
@@ -3983,6 +4150,19 @@ function drawLayers(target, layerList, scale, topLeft, bottomRight) {
     ctx.strokeStyle = `rgb(${cls.color})`;
     ctx.lineWidth = cls.width / scale;
     for (const path of cls.paths.values()) ctx.stroke(path);
+  }
+  // dots on top, the same size on screen at any zoom, and shown outside the ROIs too, though counted only inside them
+  for (const cls of sorted.filter(cls => cls.dots)) {
+    const radius = dotRadius(cls) / scale, {centres} = cls, path = new Path2D();
+    for (let i = 0; i < centres.length; i += 2) {
+      const x = centres[i], y = centres[i + 1];
+      if (x < topLeft.x - radius || x > bottomRight.x + radius || y < topLeft.y - radius || y > bottomRight.y + radius) continue;
+      path.moveTo(x + radius, y);
+      path.arc(x, y, radius, 0, 2 * Math.PI);
+    }
+    Object.assign(ctx, {fillStyle: `rgb(${cls.color})`, strokeStyle: "rgba(0, 0, 0, 0.75)", lineWidth: 1.5 / scale});
+    ctx.fill(path);
+    ctx.stroke(path);
   }
   if (!nucleiTooSmall) {
     const inView = (x, y) => x > topLeft.x - 50 && x < bottomRight.x + 50 && y > topLeft.y - 50 && y < bottomRight.y + 50;
@@ -4068,7 +4248,7 @@ function drawPane(pane) {
     ctx.stroke();
   }
   if (capturing && frame) drawFrame(ctx, dpr, width, height);
-  $("hint").hidden = !(scale < MIN_DETECTION_SCALE && layers.some(layer => [...layer.classes.values()].some(cls => cls.detection && cls.visible)));
+  $("hint").hidden = !(scale < MIN_DETECTION_SCALE && layers.some(layer => [...layer.classes.values()].some(cls => cls.detection && !cls.dots && cls.visible)));
   zoomText = slide.mpp ? `${(scale * micronsPerScreenPxAtOneX() / slide.mpp).toFixed(1)}×` : `${scale.toFixed(2)} screen px/px`;
   if (slide.mpp && eyepiece.field) zoomText += `, field ⌀ ${micronsText(+(fieldDiameter() * slide.mpp / scale).toPrecision(2))}`;
   showZoom(scale);

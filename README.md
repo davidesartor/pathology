@@ -5,7 +5,7 @@ Whole-slide image viewer and annotator that runs entirely in the browser.
 - **Viewer:** https://davidesartor.github.io/pathology/slide-viewer.html
   Open TIFF/SVS/MRXS slides, view them at the magnification of a microscope objective or within a microscope's field of view, rotate/flip, highlight areas, measure and capture images with a scale bar.
 - **Annotator:** https://davidesartor.github.io/pathology/slide-annotator.html
-  Everything above, plus GeoJSON overlays, ROIs, annotations you can edit after drawing them, and in-browser nucleus detection with HoVer-NeXt and CellViT++ models.
+  Everything above, plus GeoJSON overlays, ROIs, annotations you can edit after drawing them, dots placed by hand to count cells of each class (inside the ROIs, with lymphocyte ratios and densities), and in-browser nucleus detection with HoVer-NeXt and CellViT++ models.
 
 Each page is a single HTML file. You can also download it and open it locally by double-clicking; there is nothing to install. Both pages work on computers, iPads and phones; MRXS slides, which are folders, need a computer.
 
