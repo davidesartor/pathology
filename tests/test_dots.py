@@ -22,6 +22,7 @@ def test_dots_are_placed_changed_and_undone(annotator: Page, tiffs):
     open_files(annotator, tiffs["ome_zlib"][0])
     annotator.evaluate("viewer.viewport.zoomTo(viewer.viewport.imageToViewportZoom(0.25), viewer.viewport.imageToViewportCoordinates(3000, 2000), true)")
     annotator.click("#dots")
+    assert annotator.locator("#dot-classes button").all_inner_texts() == ["1\nTumor", "2\nLymphocyte", "3\nOther"]
     assert annotator.locator("#dot-classes button.active").inner_text().split("\n")[1] == "Tumor"
     for x in (2000, 2400, 2800):
         annotator.mouse.click(*screen(annotator, x, 2000))
@@ -49,6 +50,7 @@ def test_dots_are_placed_changed_and_undone(annotator: Page, tiffs):
     assert annotator.locator("#dot-classes button.active").inner_text().split("\n")[1] == "Mitosis"
     annotator.mouse.click(*screen(annotator, 3000, 2800))
     assert dot_counts(annotator) == {"Tumor": 3, "Lymphocyte": 4, "Mitosis": 1}
+    assert annotator.evaluate("layers.find(layer => layer.dotTool).classes.get('Mitosis').color") == [60, 190, 90]  # the first colour no class has
     annotator.keyboard.press("Escape")
     assert annotator.evaluate("!dotting")
 

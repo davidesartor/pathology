@@ -292,7 +292,7 @@
       <div id="dots-help" hidden>
         <h3>Dots</h3>
         <div class="choices" id="dot-classes"></div>
-        <div id="new-dot-class"><input type="text" id="dot-class-name" placeholder="new class" aria-label="new class" spellcheck="false"><button id="add-dot-class" title="add a class to place dots of">Add</button></div>
+        <div id="new-dot-class"><input type="text" id="dot-class-name" placeholder="new class name" aria-label="new class name" spellcheck="false"><button id="add-dot-class" title="add a class to place dots of; its colour and name can be changed in the layers">Add class</button></div>
         <p class="note">Click to place a dot of the chosen class; click a dot to give it that class, or to remove it if it has it already. Keys 1–9 choose the class. Drag to pan. Backspace undoes, Esc stops. The counts are in the layers, inside the ROIs shown.</p>
         <div class="buttons"><button id="dots-undo" title="undo the last change; Backspace also does">Undo</button></div>
       </div>
@@ -3253,7 +3253,8 @@ function finishLine(end) {
 }
 // dots: counting by hand. Each slide has one layer of them, made with its first dot; its classes count as nuclei do, in the
 // layers and inside the ROIs shown. Each change is kept as the dot it removed and the dot it added, for undo
-const DOT_CLASSES = [["Tumor", [230, 50, 50]], ["Lymphocyte", [50, 120, 255]], ["Stroma", [60, 190, 90]], ["Other", [255, 200, 0]]];
+const DOT_CLASSES = [["Tumor", [230, 50, 50]], ["Lymphocyte", [50, 120, 255]], ["Other", [255, 200, 0]]];
+const DOT_COLORS = [[60, 190, 90], [200, 80, 230], [255, 130, 30], [30, 210, 220], [255, 120, 180], [150, 100, 60], [180, 220, 60], [255, 255, 255]];  // for classes added
 const DOT_REACH = 10;  // screen px from a dot's centre within which a click hits it
 const dotRadius = cls => 2 * cls.width + 1;  // screen px
 let dotIndex = 0;  // the chosen class, by its place in the list, which keys 1-9 pick
@@ -3326,7 +3327,7 @@ function addDotClass() {
   if (existing >= 0) dotIndex = existing;
   else if (layer.classes.has(name)) return renderLayers();  // the name of another kind of class in the layer
   else {
-    const palette = DOT_CLASSES.map(([, color]) => color), used = new Set(dotClasses(layer).map(cls => toHex(cls.color)));
+    const palette = [...DOT_CLASSES.map(([, color]) => color), ...DOT_COLORS], used = new Set(dotClasses(layer).map(cls => toHex(cls.color)));
     const color = palette.find(color => !used.has(toHex(color))) ?? [Math.random() * 255, Math.random() * 255, Math.random() * 255].map(Math.round);
     layerClass(layer, name, color, true, true);
     dotIndex = dotClasses(layer).length - 1;
